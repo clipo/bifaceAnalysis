@@ -1,0 +1,12 @@
+name: bifaceAnalysis
+title: bifaceAnalysis
+username: lipolab
+account: lipolab
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 14301813
+bundleId: 9978695
+url: https://lipolab.shinyapps.io/bifaceAnalysis/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
