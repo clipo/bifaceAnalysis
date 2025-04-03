@@ -9,15 +9,14 @@ library(ggplot2)
 #--------------------------------------------------
 # 1. Configurations
 #--------------------------------------------------
-threshold_value <- 0.1              # Set global threshold
 force_rebuild_outlines <- FALSE     # Set TRUE to force regeneration
 image_folder <- here("images")
 outlines_cache <- here("cached_outlines.rds")
 
 #--------------------------------------------------
-# 2. Image Processor (Interactive Crop, No Threshold Prompt)
+# 2. Enhanced Image Processor (Adaptive Thresholding)
 #--------------------------------------------------
-process_image <- function(image_path, num_points = 100, threshold_value = 0.1) {
+process_image <- function(image_path, num_points = 100) {
   cat("🔍 Processing:", image_path, "\n")
   img_orig <- load.image(image_path)
   img_gray <- suppressWarnings(grayscale(img_orig))
@@ -33,9 +32,102 @@ process_image <- function(image_path, num_points = 100, threshold_value = 0.1) {
   y1 <- round(min(coords$y)); y2 <- round(max(coords$y))
   img_crop <- imsub(img_gray, x %inr% c(x1, x2), y %inr% c(y1, y2))
   
-  # Threshold + Binary
-  img_bin <- img_crop < threshold_value
-  plot(img_bin, main = paste("Threshold =", threshold_value))
+  # Background Analysis - Determine if artifact is darker or lighter than background
+  # Sample border pixels to estimate background color
+  width <- dim(img_crop)[1]
+  height <- dim(img_crop)[2]
+  
+  # Get border pixels (10% inset from edge to avoid potential artifacts at the very edge)
+  border_inset <- 0.1
+  top <- img_crop[, round(height * border_inset):round(height * (1-border_inset)), 1, drop=FALSE]
+  bottom <- img_crop[, round(height * border_inset):round(height * (1-border_inset)), height, drop=FALSE]
+  left <- img_crop[1, round(height * border_inset):round(height * (1-border_inset)), , drop=FALSE]
+  right <- img_crop[width, round(height * border_inset):round(height * (1-border_inset)), , drop=FALSE]
+  
+  # Convert to vectors and combine
+  border_values <- c(as.vector(top), as.vector(bottom), as.vector(left), as.vector(right))
+  background_mean <- mean(border_values, na.rm = TRUE)
+  
+  # Get central area (potential artifact region)
+  center_width <- width * 0.5
+  center_height <- height * 0.5
+  center_x_range <- round((width - center_width)/2):round((width + center_width)/2)
+  center_y_range <- round((height - center_height)/2):round((height + center_height)/2)
+  center_region <- img_crop[center_x_range, center_y_range, ,drop=FALSE]
+  center_mean <- mean(as.vector(center_region), na.rm = TRUE)
+  
+  # Determine if artifact is darker or lighter than background
+  artifact_is_darker <- center_mean < background_mean
+  
+  # Try otsu thresholding first
+  # Calculate histogram
+  hist_data <- hist(as.vector(img_crop), plot = FALSE, breaks = seq(0, 1, by = 0.01))
+  
+  # Otsu's method to find optimal threshold
+  otsu_threshold <- function(hist_obj) {
+    total <- sum(hist_obj$counts)
+    sum_total <- sum(hist_obj$mids * hist_obj$counts)
+    
+    weight_background <- cumsum(hist_obj$counts)
+    weight_foreground <- total - weight_background
+    
+    sum_background <- cumsum(hist_obj$mids * hist_obj$counts)
+    mean_background <- sum_background / weight_background
+    mean_foreground <- (sum_total - sum_background) / weight_foreground
+    
+    # Calculate between-class variance
+    between_var <- weight_background * weight_foreground * (mean_background - mean_foreground)^2
+    
+    # Find the threshold that maximizes between-class variance
+    max_idx <- which.max(between_var)
+    return(hist_obj$mids[max_idx])
+  }
+  
+  # Get Otsu threshold
+  threshold <- otsu_threshold(hist_data)
+  
+  # Apply thresholding based on whether artifact is darker or lighter
+  if (artifact_is_darker) {
+    img_bin <- img_crop < threshold
+    cat("📊 Artifact appears darker than background. Threshold:", threshold, "\n")
+  } else {
+    img_bin <- img_crop > threshold
+    cat("📊 Artifact appears lighter than background. Threshold:", threshold, "\n")
+  }
+  
+  # Show user the binary image
+  par(mfrow=c(1,2))
+  plot(img_crop, main = "Cropped Grayscale")
+  plot(img_bin, main = paste("Binary (Threshold =", round(threshold, 3), ")"))
+  par(mfrow=c(1,1))
+  
+  # Ask user if the threshold is acceptable
+  cat("Is this thresholding acceptable? (y/n): ")
+  user_response <- tolower(readline())
+  
+  # If not acceptable, allow manual threshold adjustment
+  if (user_response != "y") {
+    cat("Enter new threshold value (0-1): ")
+    new_threshold <- as.numeric(readline())
+    
+    if (!is.na(new_threshold) && new_threshold >= 0 && new_threshold <= 1) {
+      threshold <- new_threshold
+      
+      if (artifact_is_darker) {
+        img_bin <- img_crop < threshold
+      } else {
+        img_bin <- img_crop > threshold
+      }
+      
+      # Show updated binary image
+      plot(img_bin, main = paste("Updated Binary (Threshold =", threshold, ")"))
+    } else {
+      cat("❌ Invalid threshold value. Using original threshold.\n")
+    }
+  }
+  
+  # Noise cleanup - remove small connected components
+  img_bin <- clean(img_bin, 5)
   
   # Outline extraction
   contours <- imager::contours(img_bin, nlevels = 1)
@@ -43,12 +135,26 @@ process_image <- function(image_path, num_points = 100, threshold_value = 0.1) {
     warning("❌ No contour found:", image_path)
     return(NULL)
   }
-  coords <- as.data.frame(contours[[1]]) %>% select(x, y) %>% as.matrix()
-  if (nrow(coords) < num_points) {
-    warning("❌ Too few points:", image_path)
+  
+  # Check for multiple contours and select the largest one
+  selected_contour <- NULL
+  max_points <- 0
+  
+  for (i in 1:length(contours)) {
+    current_contour <- as.data.frame(contours[[i]]) %>% select(x, y) %>% as.matrix()
+    if (nrow(current_contour) > max_points) {
+      max_points <- nrow(current_contour)
+      selected_contour <- current_contour
+    }
+  }
+  
+  if (is.null(selected_contour) || nrow(selected_contour) < num_points) {
+    warning("❌ Contour has too few points:", image_path)
     return(NULL)
   }
-  coords_interp <- coo_interpolate(coords, n = num_points)
+  
+  # Interpolate to get uniform number of points
+  coords_interp <- coo_interpolate(selected_contour, n = num_points)
   
   # Final preview
   plot(coords_interp, type = "l", asp = 1, main = paste("✅ Outline:", basename(image_path)))
@@ -59,7 +165,7 @@ process_image <- function(image_path, num_points = 100, threshold_value = 0.1) {
 #--------------------------------------------------
 # 3. Batch Processing
 #--------------------------------------------------
-read_images_as_out <- function(folder_path, num_points = 100, threshold_value = 0.1) {
+read_images_as_out <- function(folder_path, num_points = 100) {
   files <- list.files(folder_path, pattern = "(?i)\\.jpe?g$", full.names = TRUE)
   if (length(files) == 0) stop("❌ No JPEG images found.")
   
@@ -67,7 +173,7 @@ read_images_as_out <- function(folder_path, num_points = 100, threshold_value = 
   names_list <- c()
   
   for (file in files) {
-    coords <- process_image(file, num_points, threshold_value)
+    coords <- process_image(file, num_points)
     if (!is.null(coords)) {
       outlines_list[[length(outlines_list) + 1]] <- coords
       names_list <- c(names_list, basename(file))
@@ -97,7 +203,7 @@ if (file.exists(outlines_cache) && !force_rebuild_outlines) {
         main = "Overlay of Cached Outlines")
 } else {
   cat("🔄 Generating outlines...\n")
-  outlines <- read_images_as_out(image_folder, num_points = 100, threshold_value = threshold_value)
+  outlines <- read_images_as_out(image_folder, num_points = 100)
   saveRDS(outlines, outlines_cache)
   cat("✅ Cached outlines saved to", outlines_cache, "\n")
 }
