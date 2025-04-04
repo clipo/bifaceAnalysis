@@ -1,3 +1,4 @@
+
 library(shiny)
 library(Momocs)
 library(imager)
@@ -79,6 +80,46 @@ ui <- fluidPage(
       numericInput("k_clusters", "Clusters", 
                    value = 3, min = 1),
       
+      # Add orientation control
+      h4("Projectile Point Orientation"),
+      selectInput("orientation", "Tip direction:",
+                  choices = c("Up" = "up", 
+                              "Down" = "down", 
+                              "Left" = "left", 
+                              "Right" = "right"),
+                  selected = "up"),
+      
+      # Add tip/blade ratio control for better region identification
+      sliderInput("tip_ratio", "Tip proportion (%):", 
+                  min = 10, max = 40, value = 20, step = 5),
+      
+      sliderInput("base_ratio", "Base proportion (%):", 
+                  min = 10, max = 40, value = 20, step = 5),
+      
+      # Add manual region selection controls
+      h4("Region Selection Method"),
+      radioButtons("region_method", "Method:", 
+                   choices = c("Automatic" = "auto",
+                               "Manual key points" = "manual"),
+                   selected = "auto"),
+      
+      conditionalPanel(
+        condition = "input.region_method == 'manual'",
+        # Display when manual mode is selected
+        h4("Manual Key Points Selection"),
+        p("Select key points on the outline after processing:"),
+        
+        actionButton("select_tip", "Select Tip", class = "btn-danger"),
+        actionButton("select_blade_left", "Left Blade Junction", class = "btn-success"),
+        actionButton("select_blade_right", "Right Blade Junction", class = "btn-success"),
+        actionButton("select_base", "Select Base", class = "btn-primary"),
+        
+        actionButton("reset_points", "Reset Points", class = "btn-warning"),
+        
+        verbatimTextOutput("key_points_info")
+      ),
+      
+      
       actionButton("crop_btn", "Process Image", 
                    class = "btn-primary"),
       
@@ -116,7 +157,7 @@ ui <- fluidPage(
                    column(6, plotOutput("cropped_plot", height = "250px")),
                    column(6, plotOutput("binary_plot", height = "250px"))
                  ),
-                 plotOutput("outline_plot", height = "250px"),
+                 plotOutput("outline_plot", height = "250px", click="outline_click"),
                  verbatimTextOutput("processing_info")
         ),
         tabPanel("Results", 
@@ -151,6 +192,16 @@ server <- function(input, output, session) {
   pca_result_r <- reactiveVal()
   tps_grid_r <- reactiveVal()
   modularity_r <- reactiveVal()
+  
+  # Additional reactive values for manual key points
+  key_points_mode <- reactiveVal(FALSE)
+  current_key_point <- reactiveVal(NULL)
+  key_points <- reactiveVal(list(
+    tip = NULL,
+    blade_left = NULL,
+    blade_right = NULL,
+    base = NULL
+  ))
   
   # Get image files
   get_files <- reactive({
@@ -203,6 +254,71 @@ server <- function(input, output, session) {
     })
     
     markers
+  })
+  
+  # Create observer for region method selection
+  observeEvent(input$region_method, {
+    if(input$region_method == "manual") {
+      # Display message in log
+      current_log <- processing_log()
+      processing_log(paste(current_log, 
+                           "\nManual region selection mode activated. Process an image and then select key points.",
+                           sep=""))
+    } else {
+      # Disable key point selection mode
+      key_points_mode(FALSE)
+    }
+  })
+  
+  # Observers for key point selection buttons
+  observeEvent(input$select_tip, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("tip")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the TIP point.", sep=""))
+  })
+  
+  observeEvent(input$select_blade_left, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("blade_left")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the LEFT BLADE junction point.", sep=""))
+  })
+  
+  observeEvent(input$select_blade_right, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("blade_right")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the RIGHT BLADE junction point.", sep=""))
+  })
+  
+  observeEvent(input$select_base, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("base")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the BASE point.", sep=""))
+  })
+  
+  observeEvent(input$reset_points, {
+    key_points(list(
+      tip = NULL,
+      blade_left = NULL,
+      blade_right = NULL,
+      base = NULL
+    ))
+    processing_log(paste(processing_log(), "\nKey points reset.", sep=""))
   })
   
   # Process image
@@ -404,22 +520,96 @@ server <- function(input, output, session) {
     plot(binary_img(), main = paste0("Binary (Threshold = ", input$threshold, ")"))
   })
   
-  # Display outline
+  # Display outline with interactive key point selection
   output$outline_plot <- renderPlot({
-    if (is.null(outline_shape())) {
+    if(is.null(outline_shape())) {
       plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, 
            main = "Outline", xlab = "", ylab = "")
       text(0.5, 0.5, "Process an image to see extracted outline")
       return()
     }
     
+    # Plot outline
     plot(outline_shape(), type = "l", asp = 1, main = "Extracted Outline")
+    
+    # Show key points if any exist
+    kp <- key_points()
+    if(!is.null(kp$tip)) {
+      points(outline_shape()[kp$tip, 1], outline_shape()[kp$tip, 2], 
+             col = "red", pch = 19, cex = 2)
+      text(outline_shape()[kp$tip, 1], outline_shape()[kp$tip, 2], 
+           "TIP", col = "red", pos = 1)
+    }
+    if(!is.null(kp$blade_left)) {
+      points(outline_shape()[kp$blade_left, 1], outline_shape()[kp$blade_left, 2], 
+             col = "green", pch = 19, cex = 2)
+      text(outline_shape()[kp$blade_left, 1], outline_shape()[kp$blade_left, 2], 
+           "BL", col = "green", pos = 2)
+    }
+    if(!is.null(kp$blade_right)) {
+      points(outline_shape()[kp$blade_right, 1], outline_shape()[kp$blade_right, 2], 
+             col = "green", pch = 19, cex = 2)
+      text(outline_shape()[kp$blade_right, 1], outline_shape()[kp$blade_right, 2], 
+           "BR", col = "green", pos = 4)
+    }
+    if(!is.null(kp$base)) {
+      points(outline_shape()[kp$base, 1], outline_shape()[kp$base, 2], 
+             col = "blue", pch = 19, cex = 2)
+      text(outline_shape()[kp$base, 1], outline_shape()[kp$base, 2], 
+           "BASE", col = "blue", pos = 3)
+    }
+  })
+  
+  # Handle clicks on the outline plot
+  observeEvent(input$outline_click, {
+    # Only process clicks if in key point selection mode
+    if(!key_points_mode() || is.null(current_key_point()) || is.null(outline_shape())) {
+      return()
+    }
+    
+    # Find the closest point on the outline to the click
+    click_x <- input$outline_click$x
+    click_y <- input$outline_click$y
+    
+    outline <- outline_shape()
+    distances <- sqrt((outline[,1] - click_x)^2 + (outline[,2] - click_y)^2)
+    closest_point <- which.min(distances)
+    
+    # Update the key points with the new selection
+    current_kp <- key_points()
+    current_kp[[current_key_point()]] <- closest_point
+    key_points(current_kp)
+    
+    # Update log
+    processing_log(paste(processing_log(), 
+                         "\nSelected point ", closest_point, " as ", 
+                         toupper(current_key_point()), ".",
+                         sep=""))
+    
+    # Turn off selection mode
+    key_points_mode(FALSE)
+  })
+  
+  # Display key points info
+  output$key_points_info <- renderText({
+    kp <- key_points()
+    if(is.null(kp$tip) && is.null(kp$blade_left) && 
+       is.null(kp$blade_right) && is.null(kp$base)) {
+      return("No points selected yet.")
+    }
+    
+    paste("Selected points:\n",
+          "Tip: ", if(is.null(kp$tip)) "Not set" else paste("Point", kp$tip), "\n",
+          "Left Blade Junction: ", if(is.null(kp$blade_left)) "Not set" else paste("Point", kp$blade_left), "\n",
+          "Right Blade Junction: ", if(is.null(kp$blade_right)) "Not set" else paste("Point", kp$blade_right), "\n",
+          "Base: ", if(is.null(kp$base)) "Not set" else paste("Point", kp$base))
   })
   
   # Display processing log
   output$processing_info <- renderText({
     processing_log()
   })
+  
   # Run analysis
   observeEvent(input$run_analysis, {
     out_list <- outlines_list()
@@ -484,13 +674,189 @@ server <- function(input, output, session) {
       ))
       
       # Estimate modularity by dividing outline into regions
-      # For projectile points: typically tip, blade, and base
       n_points <- nrow(mean_shape)
       
-      # Define hypothetical modules (tip, blade, base)
-      tip_region <- 1:(n_points/5)  # First 20% = tip
-      base_region <- ((n_points*4/5)+1):n_points  # Last 20% = base
-      blade_region <- (max(tip_region)+1):(min(base_region)-1)  # Middle = blade
+      # Determine region indices based on method
+      if (input$region_method == "manual" && length(key_points()$tip) > 0) {
+        # Use manually selected key points if available
+        kp <- key_points()
+        
+        # Check if all necessary points are selected
+        if (is.null(kp$tip) || is.null(kp$blade_left) || 
+            is.null(kp$blade_right) || is.null(kp$base)) {
+          processing_log(paste(current_log, 
+                               "\nError: Not all key points are selected for manual region definition.", 
+                               sep=""))
+          return()
+        }
+        
+        # Define regions based on selected points
+        # Calculate clockwise distance between points
+        clockwise_dist <- function(start, end, total) {
+          if(start <= end) {
+            return(end - start)
+          } else {
+            return(total - start + end)
+          }
+        }
+        
+        # Tip region: centered around tip point
+        tip_size <- round(n_points * (input$tip_ratio/100))
+        half_tip <- floor(tip_size / 2)
+        tip_start <- (kp$tip - half_tip) %% n_points
+        if(tip_start == 0) tip_start <- n_points
+        tip_end <- (kp$tip + half_tip) %% n_points
+        if(tip_end == 0) tip_end <- n_points
+        
+        # Create tip region with wrap-around handling
+        if(tip_start <= tip_end) {
+          tip_region <- tip_start:tip_end
+        } else {
+          tip_region <- c(tip_start:n_points, 1:tip_end)
+        }
+        
+        # Base region: centered around base point
+        base_size <- round(n_points * (input$base_ratio/100))
+        half_base <- floor(base_size / 2)
+        base_start <- (kp$base - half_base) %% n_points
+        if(base_start == 0) base_start <- n_points
+        base_end <- (kp$base + half_base) %% n_points
+        if(base_end == 0) base_end <- n_points
+        
+        # Create base region with wrap-around handling
+        if(base_start <= base_end) {
+          base_region <- base_start:base_end
+        } else {
+          base_region <- c(base_start:n_points, 1:base_end)
+        }
+        
+        # Blade is everything that's not tip or base
+        blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+        
+      } else {
+        # Automatic region identification based on orientation
+        # Get user-defined proportions
+        tip_prop <- input$tip_ratio / 100
+        base_prop <- input$base_ratio / 100
+        blade_prop <- 1 - tip_prop - base_prop
+        
+        # Determine region indices based on orientation
+        if (input$orientation == "up") {
+          # Tip is at the top (start of coords)
+          tip_region <- 1:round(n_points * tip_prop)
+          base_region <- (round(n_points * (1 - base_prop)) + 1):n_points
+          blade_region <- (max(tip_region) + 1):(min(base_region) - 1)
+        } else if (input$orientation == "down") {
+          # Tip is at the bottom (mid of coords)
+          mid_point <- round(n_points / 2)
+          tip_start <- mid_point - round(n_points * tip_prop / 2)
+          tip_end <- mid_point + round(n_points * tip_prop / 2)
+          tip_region <- tip_start:tip_end
+          
+          # Define base as two sections
+          base_size <- round(n_points * base_prop / 2)
+          base_region1 <- 1:base_size
+          base_region2 <- (n_points - base_size + 1):n_points
+          base_region <- c(base_region1, base_region2)
+          
+          # Blade is the remaining points
+          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+        } else if (input$orientation == "left") {
+          # Tip is on the left
+          # Find leftmost point (minimum x-coordinate)
+          x_coords <- mean_shape[, 1]
+          leftmost_idx <- which.min(x_coords)
+          
+          # Define tip region centered around the leftmost point
+          tip_size <- round(n_points * tip_prop)
+          half_tip <- floor(tip_size / 2)
+          
+          # Create indices, ensuring wrap-around if needed
+          tip_start <- (leftmost_idx - half_tip) %% n_points
+          if (tip_start == 0) tip_start <- n_points
+          tip_end <- (leftmost_idx + half_tip) %% n_points
+          if (tip_end == 0) tip_end <- n_points
+          
+          # Handle wrap-around for indices
+          if (tip_start <= tip_end) {
+            tip_region <- tip_start:tip_end
+          } else {
+            tip_region <- c(tip_start:n_points, 1:tip_end)
+          }
+          
+          # Find rightmost point for base (maximum x-coordinate)
+          rightmost_idx <- which.max(x_coords)
+          
+          # Define base region centered around the rightmost point
+          base_size <- round(n_points * base_prop)
+          half_base <- floor(base_size / 2)
+          
+          # Create indices with wrap-around handling
+          base_start <- (rightmost_idx - half_base) %% n_points
+          if (base_start == 0) base_start <- n_points
+          base_end <- (rightmost_idx + half_base) %% n_points
+          if (base_end == 0) base_end <- n_points
+          
+          # Handle wrap-around for indices
+          if (base_start <= base_end) {
+            base_region <- base_start:base_end
+          } else {
+            base_region <- c(base_start:n_points, 1:base_end)
+          }
+          
+          # Blade is everything that's not tip or base
+          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+        } else { # "right"
+          # Tip is on the right (find rightmost point)
+          x_coords <- mean_shape[, 1]
+          rightmost_idx <- which.max(x_coords)
+          
+          # Define tip region centered around the rightmost point
+          tip_size <- round(n_points * tip_prop)
+          half_tip <- floor(tip_size / 2)
+          
+          # Create indices with wrap-around handling
+          tip_start <- (rightmost_idx - half_tip) %% n_points
+          if (tip_start == 0) tip_start <- n_points
+          tip_end <- (rightmost_idx + half_tip) %% n_points
+          if (tip_end == 0) tip_end <- n_points
+          
+          # Handle wrap-around for indices
+          if (tip_start <= tip_end) {
+            tip_region <- tip_start:tip_end
+          } else {
+            tip_region <- c(tip_start:n_points, 1:tip_end)
+          }
+          
+          # Find leftmost point for base
+          leftmost_idx <- which.min(x_coords)
+          
+          # Define base region centered around the leftmost point
+          base_size <- round(n_points * base_prop)
+          half_base <- floor(base_size / 2)
+          
+          # Create indices with wrap-around handling
+          base_start <- (leftmost_idx - half_base) %% n_points
+          if (base_start == 0) base_start <- n_points
+          base_end <- (leftmost_idx + half_base) %% n_points
+          if (base_end == 0) base_end <- n_points
+          
+          # Handle wrap-around for indices
+          if (base_start <= base_end) {
+            base_region <- base_start:base_end
+          } else {
+            base_region <- c(base_start:n_points, 1:base_end)
+          }
+          
+          # Blade is everything that's not tip or base
+          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+        }
+      }
+      
+      # Ensure regions stay within bounds
+      tip_region <- tip_region[tip_region > 0 & tip_region <= n_points]
+      base_region <- base_region[base_region > 0 & base_region <= n_points]
+      blade_region <- blade_region[blade_region > 0 & blade_region <= n_points]
       
       # Create partition
       partition <- rep(0, n_points)
@@ -541,7 +907,7 @@ server <- function(input, output, session) {
     if (is.null(n_harmonics) || n_harmonics < 1) {
       n_harmonics <- 20  # Default if we can't extract it
     }
-    
+    #########
     # Create theoretical power curve (power ~ 1/h^2 is common in Fourier analysis)
     h <- 1:n_harmonics
     power <- 1/(h^2)
@@ -622,7 +988,7 @@ server <- function(input, output, session) {
           side = 3, line = -2, outer = TRUE, cex = 1.5)
   })
   
-  # Display Integration/Modularity visualization
+  # Display Integration/Modularity visualization with improved region labeling
   output$modularity_plot <- renderPlot({
     req(modularity_r(), outlines_r())
     mod <- modularity_r()
@@ -634,7 +1000,7 @@ server <- function(input, output, session) {
     # Plot 1: Mean shape with regions colored
     mean_shape <- custom_mshape(outlines$coo)
     
-    # Plot the mean shape
+    # Plot the mean shape with clearer region indicators
     plot(mean_shape, type = "n", asp = 1, 
          main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
     
@@ -645,6 +1011,16 @@ server <- function(input, output, session) {
     
     # Connect points to show outline
     lines(mean_shape, col = "gray")
+    
+    # Add region labels
+    tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
+    blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
+    base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
+    
+    # Add text labels near the center of each region
+    text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
+    text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
+    text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
     
     # Add legend
     legend("topright", legend = c("Tip", "Blade", "Base"),
@@ -805,7 +1181,7 @@ server <- function(input, output, session) {
           side = 3, line = -2, outer = TRUE, cex = 1.5)
   })
   
-  # Download handler for PDF graphics
+  # Download handler for PDF graphics - fixed version
   output$download_pdf <- downloadHandler(
     filename = function() {
       paste("MorphometricAnalysis_", format(Sys.time(), "%Y%m%d-%H%M%S"), ".pdf", sep = "")
@@ -826,12 +1202,12 @@ server <- function(input, output, session) {
       text(0.5, 0.4, paste("Number of specimens:", length(outlines_r()$coo)), cex = 1.2)
       
       # Grid of outlines
-      panel(outlines_r(), names = TRUE, cex.names = 0.7, 
-            main = "Individual Outlines")
+      panel(outlines_r(), names = TRUE, cex.names = 0.7)
+      title("Individual Outlines")
       
       # Stacked outlines
-      stack(outlines_r(), border = "black", col = "#00000010", lwd = 1,
-            main = "Stacked & Aligned Outlines")
+      stack(outlines_r(), border = "black", col = "#00000010", lwd = 1)
+      title("Stacked & Aligned Outlines")
       
       # Theoretical harmonic power
       n_harmonics <- as.numeric(input$nbh)
@@ -856,8 +1232,9 @@ server <- function(input, output, session) {
       
       # PCA visualization if available
       if (!is.null(pca_result_r())) {
-        plot_PCA(pca_result_r(), morphospace = TRUE,
-                 main = "PCA Morphospace")
+        # Use plot_PCA without main argument, then add title separately
+        plot_PCA(pca_result_r(), morphospace = TRUE)
+        title("PCA Morphospace")
         
         # PCA summary
         plot.new()
@@ -918,9 +1295,46 @@ server <- function(input, output, session) {
         # Set up the plot layout
         layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
         
-        # Plot 1: Mean shape with regions colored
+        # Calculate variance for each region - must be done here since these variables
+        # aren't available from the renderPlot scope
+        tip_var <- numeric(length(mod$regions$tip))
+        blade_var <- numeric(length(mod$regions$blade))
+        base_var <- numeric(length(mod$regions$base))
         
-        # Plot the mean shape
+        # For each specimen, calculate distance from mean
+        n_specimens <- length(outlines$coo)
+        
+        for (i in 1:length(mod$regions$tip)) {
+          point_dists <- numeric(n_specimens)
+          for (j in 1:n_specimens) {
+            spec_point <- outlines$coo[[j]][mod$regions$tip[i], ]
+            mean_point <- mean_shape[mod$regions$tip[i], ]
+            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+          }
+          tip_var[i] <- var(point_dists)
+        }
+        
+        for (i in 1:length(mod$regions$blade)) {
+          point_dists <- numeric(n_specimens)
+          for (j in 1:n_specimens) {
+            spec_point <- outlines$coo[[j]][mod$regions$blade[i], ]
+            mean_point <- mean_shape[mod$regions$blade[i], ]
+            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+          }
+          blade_var[i] <- var(point_dists)
+        }
+        
+        for (i in 1:length(mod$regions$base)) {
+          point_dists <- numeric(n_specimens)
+          for (j in 1:n_specimens) {
+            spec_point <- outlines$coo[[j]][mod$regions$base[i], ]
+            mean_point <- mean_shape[mod$regions$base[i], ]
+            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+          }
+          base_var[i] <- var(point_dists)
+        }
+        
+        # Plot 1: Mean shape with regions colored and labeled
         plot(mean_shape, type = "n", asp = 1, 
              main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
         
@@ -932,18 +1346,41 @@ server <- function(input, output, session) {
         # Connect points to show outline
         lines(mean_shape, col = "gray")
         
-        # Add legend
-        legend("topright", legend = c("Tip", "Blade", "Base"),
-               col = c("red", "green", "blue"), pch = 19, cex = 0.8)
+        # Add region labels
+        tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
+        blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
+        base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
         
-        # Plot 2: Variance by region (simplified for PDF)
+        # Add text labels near the center of each region
+        text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
+        text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
+        text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
+        
+        # Plot 2: Variance by region
         region_vars <- c(mean(tip_var), mean(blade_var), mean(base_var))
         names(region_vars) <- c("Tip", "Blade", "Base")
         
         barplot(region_vars, col = c("red", "green", "blue"),
                 main = "Variance by Region", ylab = "Mean Variance")
         
-        # Plot 3: Sample heatmap
+        # Calculate point variances for heatmap
+        point_vars <- numeric(mod$n_points)
+        
+        # Calculate variance at each point
+        for (i in 1:mod$n_points) {
+          point_dists <- numeric(n_specimens)
+          for (j in 1:n_specimens) {
+            spec_point <- outlines$coo[[j]][i, ]
+            mean_point <- mean_shape[i, ]
+            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+          }
+          point_vars[i] <- var(point_dists)
+        }
+        
+        # Normalize variance values to 0-1 range for coloring
+        norm_vars <- (point_vars - min(point_vars)) / (max(point_vars) - min(point_vars))
+        
+        # Plot 3: Heat map of variance along outline
         plot(mean_shape, type = "n", asp = 1, 
              main = "Variance Heatmap", axes = FALSE, xlab = "", ylab = "")
         
@@ -955,6 +1392,50 @@ server <- function(input, output, session) {
         
         # Connect points to show outline
         lines(mean_shape, col = "gray")
+        
+        # Function to calculate mean distance between two sets of points
+        calc_distance <- function(shape1, shape2) {
+          return(mean(sqrt(rowSums((shape1 - shape2)^2))))
+        }
+        
+        # Calculate distances between all pairs of specimens
+        # Matrix to store distances for each region
+        tip_dists <- matrix(0, n_specimens, n_specimens)
+        blade_dists <- matrix(0, n_specimens, n_specimens)
+        base_dists <- matrix(0, n_specimens, n_specimens)
+        
+        for (i in 1:(n_specimens-1)) {
+          for (j in (i+1):n_specimens) {
+            # Tip distances
+            tip_dists[i,j] <- tip_dists[j,i] <- calc_distance(
+              outlines$coo[[i]][mod$regions$tip,], 
+              outlines$coo[[j]][mod$regions$tip,]
+            )
+            
+            # Blade distances
+            blade_dists[i,j] <- blade_dists[j,i] <- calc_distance(
+              outlines$coo[[i]][mod$regions$blade,], 
+              outlines$coo[[j]][mod$regions$blade,]
+            )
+            
+            # Base distances
+            base_dists[i,j] <- base_dists[j,i] <- calc_distance(
+              outlines$coo[[i]][mod$regions$base,], 
+              outlines$coo[[j]][mod$regions$base,]
+            )
+          }
+        }
+        
+        # Calculate correlations between distance matrices
+        tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
+        tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
+        blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
+        
+        # Create correlation matrix
+        cor_matrix <- matrix(1, 3, 3)
+        cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
+        cor_matrix[1,3] <- cor_matrix[3,1] <- tip_base_cor
+        cor_matrix[2,3] <- cor_matrix[3,2] <- blade_base_cor
         
         # Plot 4: Correlation matrix
         image(1:3, 1:3, cor_matrix, axes = FALSE, 
