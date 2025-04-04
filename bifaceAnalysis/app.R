@@ -894,33 +894,72 @@ server <- function(input, output, session) {
           main = "Stacked & Aligned Outlines")
   })
   
-  # Display EFA harmonics power
+  # Display actual EFA harmonics power
   output$harmonic_plot <- renderPlot({
     req(efa_result_r())
     efa <- efa_result_r()
     
-    # Create a simplified visualization that doesn't depend on coefficient structure
-    # Instead, we'll visualize the expected power decay for Fourier harmonics
-    # This is a generic approximation but useful for educational purposes
-    
+    # Extract harmonics info and ensure it's valid
     n_harmonics <- efa$nb.h
-    if (is.null(n_harmonics) || n_harmonics < 1) {
-      n_harmonics <- 20  # Default if we can't extract it
-    }
-    #########
-    # Create theoretical power curve (power ~ 1/h^2 is common in Fourier analysis)
-    h <- 1:n_harmonics
-    power <- 1/(h^2)
     
-    # Normalize to percentage
-    power_percent <- 100 * power / sum(power)
+    # Add debug print and validation
+    print(paste("n_harmonics type:", class(n_harmonics), "value:", n_harmonics))
+    
+    # Check if n_harmonics is valid
+    if (is.null(n_harmonics) || !is.numeric(n_harmonics) || length(n_harmonics) == 0 || n_harmonics < 1) {
+      # Fallback to a default value
+      n_harmonics <- 20
+      print("Using default n_harmonics = 20")
+    }
+    
+    # Calculate actual power for each harmonic from the coefficients
+    harmonic_power <- numeric(n_harmonics)
+    
+    # Debug check if coefficient structure exists
+    if (is.null(efa$coe) || !is.matrix(efa$coe)) {
+      print("Warning: EFA coefficients matrix is not available or not in expected format")
+      print(paste("efa$coe class:", class(efa$coe)))
+      print(paste("efa$coe dimensions:", if(is.matrix(efa$coe)) paste(dim(efa$coe), collapse="x") else "N/A"))
+      
+      # Fallback to theoretical distribution if we can't access actual coefficients
+      harmonic_power <- 1/(1:n_harmonics)^2
+      print("Using theoretical power distribution as fallback")
+    } else {
+      # For each harmonic, calculate the power from its coefficients
+      for (h in 1:n_harmonics) {
+        # Get indices for this harmonic's coefficients
+        coef_indices <- (4*(h-1) + 1):(4*h)
+        
+        # Check if we have enough coefficients
+        if (max(coef_indices) <= ncol(efa$coe)) {
+          # Average the squared coefficients across all specimens
+          harmonic_power[h] <- mean(apply(efa$coe[, coef_indices, drop=FALSE], 1, function(x) sum(x^2)))
+        } else {
+          # Handle edge case if coefficients are missing
+          harmonic_power[h] <- 0
+          print(paste("Warning: coefficients missing for harmonic", h))
+        }
+      }
+    }
+    
+    # Calculate normalized power as percentage
+    total_power <- sum(harmonic_power)
+    if (total_power > 0) {
+      power_percent <- 100 * harmonic_power / total_power
+    } else {
+      # Handle edge case of zero total power
+      power_percent <- rep(0, n_harmonics)
+      power_percent[1] <- 100  # Assign all power to first harmonic as fallback
+    }
+    
+    # Calculate cumulative power
     cumulative <- cumsum(power_percent)
     
     # Create a barplot with cumulative line
     par(mar = c(5, 4, 4, 4) + 0.1)
     bp <- barplot(power_percent, 
                   ylim = c(0, max(100, max(power_percent) * 1.2)),
-                  main = "Theoretical Harmonic Power Distribution", 
+                  main = "Harmonic Power Distribution", 
                   xlab = "Harmonic", 
                   ylab = "Power (%)",
                   col = "skyblue")
@@ -941,9 +980,13 @@ server <- function(input, output, session) {
            col = c(NA, "red"),
            bty = "n")
     
-    # Add note
-    mtext("Note: This is a theoretical approximation based on typical Fourier analysis", 
-          side = 1, line = 4, cex = 0.8)
+    # Add note about 90% cumulative power if applicable
+    h_90_idx <- which(cumulative >= 90)
+    if (length(h_90_idx) > 0) {
+      h_90 <- min(h_90_idx)
+      mtext(paste0("90% of shape information captured by first ", h_90, " harmonics"), 
+            side = 3, line = 0, cex = 0.8)
+    }
   })
   
   # Display PCA morphospace
@@ -1209,17 +1252,29 @@ server <- function(input, output, session) {
       stack(outlines_r(), border = "black", col = "#00000010", lwd = 1)
       title("Stacked & Aligned Outlines")
       
-      # Theoretical harmonic power
-      n_harmonics <- as.numeric(input$nbh)
-      h <- 1:n_harmonics
-      power <- 1/(h^2)
-      power_percent <- 100 * power / sum(power)
+      # Actual harmonic power
+      efa <- efa_result_r()
+      n_harmonics <- efa$nb.h
+      
+      # Calculate actual power for each harmonic from the coefficients
+      harmonic_power <- numeric(n_harmonics)
+      for (h in 1:n_harmonics) {
+        coef_indices <- (4*(h-1) + 1):(4*h)
+        if (max(coef_indices) <= ncol(efa$coe)) {
+          harmonic_power[h] <- mean(apply(efa$coe[, coef_indices], 1, function(x) sum(x^2)))
+        } else {
+          harmonic_power[h] <- 0
+        }
+      }
+      
+      # Calculate normalized power as percentage
+      power_percent <- 100 * harmonic_power / sum(harmonic_power)
       cumulative <- cumsum(power_percent)
       
       par(mar = c(5, 4, 4, 4) + 0.1)
       bp <- barplot(power_percent, 
                     ylim = c(0, max(100, max(power_percent) * 1.2)),
-                    main = "Theoretical Harmonic Power Distribution", 
+                    main = "Actual Harmonic Power Distribution", 
                     xlab = "Harmonic", 
                     ylab = "Power (%)",
                     col = "skyblue")
