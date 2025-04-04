@@ -13,20 +13,28 @@ There are two versions:
 
 - Upload or use sample images
 - Interactive cropping (click to crop region)
-- Thresholding with live preview
+- **Adaptive thresholding with live preview**
+- **Support for both light-on-dark and dark-on-light artifacts**
+- **Configurable noise removal**
+- **Automatic largest contour selection**
 - Outline extraction and interpolation
 - Elliptical Fourier Analysis (EFA)
 - Principal Component Analysis (PCA)
-- Clustering (hierarchical)
+- Hierarchical clustering
+- **Thin-plate spline deformation visualization**
+- **Integration/modularity analysis of shape regions**
 - Publication-quality plots:
-  - PCA plots (with shape outlines or ggplot2)
-  - Dendrogram
   - Outlines grid
-  - Stacked overlay
+  - **Stacked and aligned outlines**
+  - **EFA harmonic power distribution**
+  - PCA plots with shape morphospace
+  - **Shape variation at PCA extremes**
+  - **Regional variance heatmaps**
+  - **Region correlation matrices**
 - Downloadable outputs:
   - PCA results (`.csv`)
   - Extracted outlines (`.rds`)
-  - Combined plots (`.pdf`)
+  - **Comprehensive analysis report (`.pdf`)**
 
 ---
 

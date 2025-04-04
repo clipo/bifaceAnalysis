@@ -16,6 +16,34 @@ safe_extract_contour <- function(contour) {
   })
 }
 
+# Custom mshape function to calculate the mean shape from a list of coordinates
+custom_mshape <- function(coo_list) {
+  # Check if input is a Momocs Out object
+  if (inherits(coo_list, "Out")) {
+    coo_list <- coo_list$coo
+  }
+  
+  # Get number of coordinates and dimensions
+  n_shapes <- length(coo_list)
+  if (n_shapes == 0) return(NULL)
+  
+  n_points <- nrow(coo_list[[1]])
+  n_dims <- ncol(coo_list[[1]])
+  
+  # Initialize mean shape matrix
+  mean_shape <- matrix(0, nrow = n_points, ncol = n_dims)
+  
+  # Sum all shapes
+  for (i in 1:n_shapes) {
+    mean_shape <- mean_shape + coo_list[[i]]
+  }
+  
+  # Divide by number of shapes to get mean
+  mean_shape <- mean_shape / n_shapes
+  
+  return(mean_shape)
+}
+
 ui <- fluidPage(
   titlePanel("Projectile Point Shape Analysis"),
   
@@ -61,7 +89,13 @@ ui <- fluidPage(
                    class = "btn-warning"),
       
       actionButton("run_analysis", "Run Analysis", 
-                   class = "btn-success")
+                   class = "btn-success"),
+      
+      hr(),
+      
+      h4("Downloads"),
+      downloadButton("download_pdf", "Download Graphics (PDF)", 
+                     class = "btn-danger")
     ),
     
     mainPanel(
@@ -90,7 +124,9 @@ ui <- fluidPage(
                    tabPanel("Outlines Grid", plotOutput("grid_plot", height = "500px")),
                    tabPanel("Stacked Outlines", plotOutput("stack_plot", height = "500px")),
                    tabPanel("EFA Harmonic Power", plotOutput("harmonic_plot", height = "500px")),
-                   tabPanel("PCA Morphospace", plotOutput("morpho_plot", height = "500px"))
+                   tabPanel("PCA Morphospace", plotOutput("morpho_plot", height = "500px")),
+                   tabPanel("Thin-Plate Splines", plotOutput("tps_plot", height = "500px")),
+                   tabPanel("Integration/Modularity", plotOutput("modularity_plot", height = "500px"))
                  )
         )
       )
@@ -113,6 +149,8 @@ server <- function(input, output, session) {
   outlines_r <- reactiveVal()
   efa_result_r <- reactiveVal()
   pca_result_r <- reactiveVal()
+  tps_grid_r <- reactiveVal()
+  modularity_r <- reactiveVal()
   
   # Get image files
   get_files <- reactive({
@@ -188,7 +226,7 @@ server <- function(input, output, session) {
     tryCatch({
       # Load image
       img <- load.image(files[idx])
-      img_gray <- grayscale(img)
+      img_gray <- suppressWarnings(grayscale(img))
       
       # Crop image
       cp <- click_points()
@@ -382,7 +420,6 @@ server <- function(input, output, session) {
   output$processing_info <- renderText({
     processing_log()
   })
-  
   # Run analysis
   observeEvent(input$run_analysis, {
     out_list <- outlines_list()
@@ -423,6 +460,50 @@ server <- function(input, output, session) {
       pca$fac <- data.frame(cluster = factor(clusters))
       
       pca_result_r(pca)
+      
+      # Calculate mean shape for TPS grid
+      mean_shape <- custom_mshape(outlines$coo)
+      
+      # For TPS visualization, use actual specimen shapes at the extremes of the PCA
+      pc1_scores <- pca$x[,1]
+      pc2_scores <- pca$x[,2]
+      
+      # Find specimens at extremes of PC axes
+      pc1_pos_idx <- which.max(pc1_scores)
+      pc1_neg_idx <- which.min(pc1_scores)
+      pc2_pos_idx <- which.max(pc2_scores)
+      pc2_neg_idx <- which.min(pc2_scores)
+      
+      # Store shapes at PCA extremes
+      tps_grid_r(list(
+        mean = mean_shape,
+        pc1_pos = outlines$coo[[pc1_pos_idx]],
+        pc1_neg = outlines$coo[[pc1_neg_idx]],
+        pc2_pos = outlines$coo[[pc2_pos_idx]],
+        pc2_neg = outlines$coo[[pc2_neg_idx]]
+      ))
+      
+      # Estimate modularity by dividing outline into regions
+      # For projectile points: typically tip, blade, and base
+      n_points <- nrow(mean_shape)
+      
+      # Define hypothetical modules (tip, blade, base)
+      tip_region <- 1:(n_points/5)  # First 20% = tip
+      base_region <- ((n_points*4/5)+1):n_points  # Last 20% = base
+      blade_region <- (max(tip_region)+1):(min(base_region)-1)  # Middle = blade
+      
+      # Create partition
+      partition <- rep(0, n_points)
+      partition[tip_region] <- 1  # Tip
+      partition[blade_region] <- 2  # Blade
+      partition[base_region] <- 3  # Base
+      
+      # Store results
+      modularity_r(list(
+        partition = partition,
+        regions = list(tip = tip_region, blade = blade_region, base = base_region),
+        n_points = n_points
+      ))
       
       # Update log and switch to Results tab
       processing_log(paste(current_log, "\nAnalysis complete! Switching to Results tab.", sep=""))
@@ -504,6 +585,403 @@ server <- function(input, output, session) {
     req(pca_result_r())
     plot_PCA(pca_result_r(), morphospace = TRUE)
   })
+  
+  # Display Thin-Plate Spline visualizations
+  output$tps_plot <- renderPlot({
+    req(tps_grid_r(), outlines_r())
+    tps <- tps_grid_r()
+    
+    # Create a 2x2 layout
+    par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
+    
+    # PC1 negative - use actual shape
+    plot(tps$mean, type = "l", asp = 1, main = "PC1 Negative", 
+         xlab = "", ylab = "", axes = FALSE, col = "gray")
+    lines(tps$pc1_neg, col = "red", lwd = 2)
+    
+    # PC1 positive - use actual shape
+    plot(tps$mean, type = "l", asp = 1, main = "PC1 Positive", 
+         xlab = "", ylab = "", axes = FALSE, col = "gray")
+    lines(tps$pc1_pos, col = "blue", lwd = 2)
+    
+    # PC2 negative - use actual shape
+    plot(tps$mean, type = "l", asp = 1, main = "PC2 Negative", 
+         xlab = "", ylab = "", axes = FALSE, col = "gray")
+    lines(tps$pc2_neg, col = "red", lwd = 2)
+    
+    # PC2 positive - use actual shape
+    plot(tps$mean, type = "l", asp = 1, main = "PC2 Positive", 
+         xlab = "", ylab = "", axes = FALSE, col = "gray")
+    lines(tps$pc2_pos, col = "blue", lwd = 2)
+    
+    # Reset layout
+    par(mfrow = c(1, 1))
+    
+    # Add title
+    mtext("Shape Variation at PCA Extremes", 
+          side = 3, line = -2, outer = TRUE, cex = 1.5)
+  })
+  
+  # Display Integration/Modularity visualization
+  output$modularity_plot <- renderPlot({
+    req(modularity_r(), outlines_r())
+    mod <- modularity_r()
+    outlines <- outlines_r()
+    
+    # Set up the plot layout
+    layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
+    
+    # Plot 1: Mean shape with regions colored
+    mean_shape <- custom_mshape(outlines$coo)
+    
+    # Plot the mean shape
+    plot(mean_shape, type = "n", asp = 1, 
+         main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
+    
+    # Plot each region with different colors
+    points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
+    points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
+    points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
+    
+    # Connect points to show outline
+    lines(mean_shape, col = "gray")
+    
+    # Add legend
+    legend("topright", legend = c("Tip", "Blade", "Base"),
+           col = c("red", "green", "blue"), pch = 19, cex = 0.8)
+    
+    # Plot 2: Variance by region
+    # Calculate variance in each region across all specimens
+    tip_var <- numeric(length(mod$regions$tip))
+    blade_var <- numeric(length(mod$regions$blade))
+    base_var <- numeric(length(mod$regions$base))
+    
+    # For each specimen, calculate distance from mean
+    n_specimens <- length(outlines$coo)
+    
+    for (i in 1:length(mod$regions$tip)) {
+      point_dists <- numeric(n_specimens)
+      for (j in 1:n_specimens) {
+        spec_point <- outlines$coo[[j]][mod$regions$tip[i], ]
+        mean_point <- mean_shape[mod$regions$tip[i], ]
+        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+      }
+      tip_var[i] <- var(point_dists)
+    }
+    
+    for (i in 1:length(mod$regions$blade)) {
+      point_dists <- numeric(n_specimens)
+      for (j in 1:n_specimens) {
+        spec_point <- outlines$coo[[j]][mod$regions$blade[i], ]
+        mean_point <- mean_shape[mod$regions$blade[i], ]
+        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+      }
+      blade_var[i] <- var(point_dists)
+    }
+    
+    for (i in 1:length(mod$regions$base)) {
+      point_dists <- numeric(n_specimens)
+      for (j in 1:n_specimens) {
+        spec_point <- outlines$coo[[j]][mod$regions$base[i], ]
+        mean_point <- mean_shape[mod$regions$base[i], ]
+        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+      }
+      base_var[i] <- var(point_dists)
+    }
+    
+    # Calculate mean variance for each region
+    region_vars <- c(mean(tip_var), mean(blade_var), mean(base_var))
+    names(region_vars) <- c("Tip", "Blade", "Base")
+    
+    # Create barplot
+    barplot(region_vars, col = c("red", "green", "blue"),
+            main = "Variance by Region", ylab = "Mean Variance")
+    
+    # Plot 3: Heat map of variance along outline
+    point_vars <- numeric(mod$n_points)
+    
+    # Calculate variance at each point
+    for (i in 1:mod$n_points) {
+      point_dists <- numeric(n_specimens)
+      for (j in 1:n_specimens) {
+        spec_point <- outlines$coo[[j]][i, ]
+        mean_point <- mean_shape[i, ]
+        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+      }
+      point_vars[i] <- var(point_dists)
+    }
+    
+    # Plot mean shape
+    plot(mean_shape, type = "n", asp = 1, 
+         main = "Variance Heatmap", axes = FALSE, xlab = "", ylab = "")
+    
+    # Color points by variance
+    # Normalize variance values to 0-1 range for coloring
+    norm_vars <- (point_vars - min(point_vars)) / (max(point_vars) - min(point_vars))
+    
+    # Plot points colored by variance
+    for (i in 1:mod$n_points) {
+      # Create color from blue (low variance) to red (high variance)
+      col_val <- rgb(norm_vars[i], 0, 1-norm_vars[i])
+      points(mean_shape[i, 1], mean_shape[i, 2], col = col_val, pch = 19, cex = 1.5)
+    }
+    
+    # Connect points to show outline
+    lines(mean_shape, col = "gray")
+    
+    # Plot 4: Shape covariance between regions
+    # Calculate pairwise correlations between regions
+    
+    # Function to calculate mean distance between two sets of points
+    calc_distance <- function(shape1, shape2) {
+      return(mean(sqrt(rowSums((shape1 - shape2)^2))))
+    }
+    
+    # Calculate distances between all pairs of specimens
+    n_specimens <- length(outlines$coo)
+    
+    # Matrix to store distances for each region
+    tip_dists <- matrix(0, n_specimens, n_specimens)
+    blade_dists <- matrix(0, n_specimens, n_specimens)
+    base_dists <- matrix(0, n_specimens, n_specimens)
+    
+    for (i in 1:(n_specimens-1)) {
+      for (j in (i+1):n_specimens) {
+        # Tip distances
+        tip_dists[i,j] <- tip_dists[j,i] <- calc_distance(
+          outlines$coo[[i]][mod$regions$tip,], 
+          outlines$coo[[j]][mod$regions$tip,]
+        )
+        
+        # Blade distances
+        blade_dists[i,j] <- blade_dists[j,i] <- calc_distance(
+          outlines$coo[[i]][mod$regions$blade,], 
+          outlines$coo[[j]][mod$regions$blade,]
+        )
+        
+        # Base distances
+        base_dists[i,j] <- base_dists[j,i] <- calc_distance(
+          outlines$coo[[i]][mod$regions$base,], 
+          outlines$coo[[j]][mod$regions$base,]
+        )
+      }
+    }
+    
+    # Calculate correlations between distance matrices
+    tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
+    tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
+    blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
+    
+    # Create correlation matrix
+    cor_matrix <- matrix(1, 3, 3)
+    cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
+    cor_matrix[1,3] <- cor_matrix[3,1] <- tip_base_cor
+    cor_matrix[2,3] <- cor_matrix[3,2] <- blade_base_cor
+    
+    # Create heatmap
+    image(1:3, 1:3, cor_matrix, axes = FALSE, 
+          col = colorRampPalette(c("blue", "white", "red"))(100),
+          main = "Region Correlations",
+          xlab = "", ylab = "")
+    axis(1, at = 1:3, labels = c("Tip", "Blade", "Base"))
+    axis(2, at = 1:3, labels = c("Tip", "Blade", "Base"))
+    
+    # Add correlation values
+    text(1, 1, round(cor_matrix[1,1], 2), col = "black")
+    text(1, 2, round(cor_matrix[1,2], 2), col = "black")
+    text(1, 3, round(cor_matrix[1,3], 2), col = "black")
+    text(2, 1, round(cor_matrix[2,1], 2), col = "black")
+    text(2, 2, round(cor_matrix[2,2], 2), col = "black")
+    text(2, 3, round(cor_matrix[2,3], 2), col = "black")
+    text(3, 1, round(cor_matrix[3,1], 2), col = "black")
+    text(3, 2, round(cor_matrix[3,2], 2), col = "black")
+    text(3, 3, round(cor_matrix[3,3], 2), col = "black")
+    
+    # Reset layout
+    par(mfrow = c(1, 1))
+    
+    # Add title
+    mtext("Integration & Modularity Analysis", 
+          side = 3, line = -2, outer = TRUE, cex = 1.5)
+  })
+  
+  # Download handler for PDF graphics
+  output$download_pdf <- downloadHandler(
+    filename = function() {
+      paste("MorphometricAnalysis_", format(Sys.time(), "%Y%m%d-%H%M%S"), ".pdf", sep = "")
+    },
+    content = function(file) {
+      # Check if analysis results exist
+      if (is.null(outlines_r())) {
+        return(NULL)
+      }
+      
+      # Create PDF with multiple plots
+      pdf(file, width = 8.5, height = 11)
+      
+      # Title page
+      plot.new()
+      text(0.5, 0.6, "Morphometric Analysis Results", cex = 2)
+      text(0.5, 0.5, paste("Generated on", format(Sys.Date(), "%B %d, %Y")), cex = 1.2)
+      text(0.5, 0.4, paste("Number of specimens:", length(outlines_r()$coo)), cex = 1.2)
+      
+      # Grid of outlines
+      panel(outlines_r(), names = TRUE, cex.names = 0.7, 
+            main = "Individual Outlines")
+      
+      # Stacked outlines
+      stack(outlines_r(), border = "black", col = "#00000010", lwd = 1,
+            main = "Stacked & Aligned Outlines")
+      
+      # Theoretical harmonic power
+      n_harmonics <- as.numeric(input$nbh)
+      h <- 1:n_harmonics
+      power <- 1/(h^2)
+      power_percent <- 100 * power / sum(power)
+      cumulative <- cumsum(power_percent)
+      
+      par(mar = c(5, 4, 4, 4) + 0.1)
+      bp <- barplot(power_percent, 
+                    ylim = c(0, max(100, max(power_percent) * 1.2)),
+                    main = "Theoretical Harmonic Power Distribution", 
+                    xlab = "Harmonic", 
+                    ylab = "Power (%)",
+                    col = "skyblue")
+      
+      par(new = TRUE)
+      plot(bp, cumulative, type = "b", pch = 19, col = "red",
+           axes = FALSE, xlab = "", ylab = "")
+      axis(side = 4, at = pretty(range(cumulative)))
+      mtext("Cumulative (%)", side = 4, line = 3)
+      
+      # PCA visualization if available
+      if (!is.null(pca_result_r())) {
+        plot_PCA(pca_result_r(), morphospace = TRUE,
+                 main = "PCA Morphospace")
+        
+        # PCA summary
+        plot.new()
+        grid <- pca_result_r()$x
+        pc1_var <- round(100 * pca_result_r()$eig[1] / sum(pca_result_r()$eig), 1)
+        pc2_var <- round(100 * pca_result_r()$eig[2] / sum(pca_result_r()$eig), 1)
+        
+        text(0.5, 0.9, "PCA Summary", cex = 1.5)
+        text(0.5, 0.8, paste("PC1 explains", pc1_var, "% of variance"), cex = 1.2)
+        text(0.5, 0.7, paste("PC2 explains", pc2_var, "% of variance"), cex = 1.2)
+        text(0.5, 0.6, paste("Cumulative:", pc1_var + pc2_var, "%"), cex = 1.2)
+        
+        # Range on PC1 and PC2
+        text(0.5, 0.4, paste("PC1 range:", round(min(grid[,1]), 2), "to", round(max(grid[,1]), 2)), cex = 1)
+        text(0.5, 0.3, paste("PC2 range:", round(min(grid[,2]), 2), "to", round(max(grid[,2]), 2)), cex = 1)
+      }
+      
+      # Add TPS grid if available
+      if (!is.null(tps_grid_r())) {
+        tps <- tps_grid_r()
+        
+        # Create a 2x2 layout inside the PDF
+        par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
+        
+        # PC1 negative - use actual shape
+        plot(tps$mean, type = "l", asp = 1, main = "PC1 Negative", 
+             xlab = "", ylab = "", axes = FALSE, col = "gray")
+        lines(tps$pc1_neg, col = "red", lwd = 2)
+        
+        # PC1 positive - use actual shape
+        plot(tps$mean, type = "l", asp = 1, main = "PC1 Positive", 
+             xlab = "", ylab = "", axes = FALSE, col = "gray")
+        lines(tps$pc1_pos, col = "blue", lwd = 2)
+        
+        # PC2 negative - use actual shape
+        plot(tps$mean, type = "l", asp = 1, main = "PC2 Negative", 
+             xlab = "", ylab = "", axes = FALSE, col = "gray")
+        lines(tps$pc2_neg, col = "red", lwd = 2)
+        
+        # PC2 positive - use actual shape
+        plot(tps$mean, type = "l", asp = 1, main = "PC2 Positive", 
+             xlab = "", ylab = "", axes = FALSE, col = "gray")
+        lines(tps$pc2_pos, col = "blue", lwd = 2)
+        
+        # Reset layout
+        par(mfrow = c(1, 1))
+        
+        # Add title for TPS page
+        title("Shape Variation at PCA Extremes", line = -1)
+      }
+      
+      # Add modularity plots if available
+      if (!is.null(modularity_r()) && !is.null(outlines_r())) {
+        mod <- modularity_r()
+        outlines <- outlines_r()
+        mean_shape <- custom_mshape(outlines$coo)
+        
+        # Set up the plot layout
+        layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
+        
+        # Plot 1: Mean shape with regions colored
+        
+        # Plot the mean shape
+        plot(mean_shape, type = "n", asp = 1, 
+             main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
+        
+        # Plot each region with different colors
+        points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
+        points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
+        points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
+        
+        # Connect points to show outline
+        lines(mean_shape, col = "gray")
+        
+        # Add legend
+        legend("topright", legend = c("Tip", "Blade", "Base"),
+               col = c("red", "green", "blue"), pch = 19, cex = 0.8)
+        
+        # Plot 2: Variance by region (simplified for PDF)
+        region_vars <- c(mean(tip_var), mean(blade_var), mean(base_var))
+        names(region_vars) <- c("Tip", "Blade", "Base")
+        
+        barplot(region_vars, col = c("red", "green", "blue"),
+                main = "Variance by Region", ylab = "Mean Variance")
+        
+        # Plot 3: Sample heatmap
+        plot(mean_shape, type = "n", asp = 1, 
+             main = "Variance Heatmap", axes = FALSE, xlab = "", ylab = "")
+        
+        # Plot points with calculated variance colors
+        for (i in 1:mod$n_points) {
+          col_val <- rgb(norm_vars[i], 0, 1-norm_vars[i])
+          points(mean_shape[i, 1], mean_shape[i, 2], col = col_val, pch = 19, cex = 1.5)
+        }
+        
+        # Connect points to show outline
+        lines(mean_shape, col = "gray")
+        
+        # Plot 4: Correlation matrix
+        image(1:3, 1:3, cor_matrix, axes = FALSE, 
+              col = colorRampPalette(c("blue", "white", "red"))(100),
+              main = "Region Correlations",
+              xlab = "", ylab = "")
+        axis(1, at = 1:3, labels = c("Tip", "Blade", "Base"))
+        axis(2, at = 1:3, labels = c("Tip", "Blade", "Base"))
+        
+        # Add correlation values
+        text(1, 1, round(cor_matrix[1,1], 2), col = "black")
+        text(1, 2, round(cor_matrix[1,2], 2), col = "black")
+        text(1, 3, round(cor_matrix[1,3], 2), col = "black")
+        text(2, 1, round(cor_matrix[2,1], 2), col = "black")
+        text(2, 2, round(cor_matrix[2,2], 2), col = "black")
+        text(2, 3, round(cor_matrix[2,3], 2), col = "black")
+        text(3, 1, round(cor_matrix[3,1], 2), col = "black")
+        text(3, 2, round(cor_matrix[3,2], 2), col = "black")
+        text(3, 3, round(cor_matrix[3,3], 2), col = "black")
+        
+        # Reset layout
+        par(mfrow = c(1, 1))
+      }
+      
+      dev.off()
+    }
+  )
 }
 
 shinyApp(ui, server)
