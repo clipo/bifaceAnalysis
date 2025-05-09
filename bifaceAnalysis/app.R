@@ -1,4 +1,3 @@
-
 library(shiny)
 library(Momocs)
 library(imager)
@@ -89,9 +88,15 @@ ui <- fluidPage(
                               "Right" = "right"),
                   selected = "up"),
       
-      # Add tip/blade ratio control for better region identification
+      # Add region proportion controls with added shoulder
       sliderInput("tip_ratio", "Tip proportion (%):", 
                   min = 10, max = 40, value = 20, step = 5),
+      
+      sliderInput("blade_ratio", "Blade proportion (%):", 
+                  min = 20, max = 60, value = 40, step = 5),
+      
+      sliderInput("shoulder_ratio", "Shoulder proportion (%):", 
+                  min = 10, max = 30, value = 15, step = 5),
       
       sliderInput("base_ratio", "Base proportion (%):", 
                   min = 10, max = 40, value = 20, step = 5),
@@ -112,6 +117,8 @@ ui <- fluidPage(
         actionButton("select_tip", "Select Tip", class = "btn-danger"),
         actionButton("select_blade_left", "Left Blade Junction", class = "btn-success"),
         actionButton("select_blade_right", "Right Blade Junction", class = "btn-success"),
+        actionButton("select_shoulder_left", "Left Shoulder Junction", class = "btn-info"),
+        actionButton("select_shoulder_right", "Right Shoulder Junction", class = "btn-info"),
         actionButton("select_base", "Select Base", class = "btn-primary"),
         
         actionButton("reset_points", "Reset Points", class = "btn-warning"),
@@ -200,6 +207,8 @@ server <- function(input, output, session) {
     tip = NULL,
     blade_left = NULL,
     blade_right = NULL,
+    shoulder_left = NULL,
+    shoulder_right = NULL,
     base = NULL
   ))
   
@@ -301,6 +310,27 @@ server <- function(input, output, session) {
     processing_log(paste(processing_log(), "\nClick on the outline to select the RIGHT BLADE junction point.", sep=""))
   })
   
+  # New observers for shoulder points
+  observeEvent(input$select_shoulder_left, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("shoulder_left")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the LEFT SHOULDER junction point.", sep=""))
+  })
+  
+  observeEvent(input$select_shoulder_right, {
+    if(is.null(outline_shape())) {
+      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
+      return()
+    }
+    key_points_mode(TRUE)
+    current_key_point("shoulder_right")
+    processing_log(paste(processing_log(), "\nClick on the outline to select the RIGHT SHOULDER junction point.", sep=""))
+  })
+  
   observeEvent(input$select_base, {
     if(is.null(outline_shape())) {
       processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
@@ -316,6 +346,8 @@ server <- function(input, output, session) {
       tip = NULL,
       blade_left = NULL,
       blade_right = NULL,
+      shoulder_left = NULL,
+      shoulder_right = NULL,
       base = NULL
     ))
     processing_log(paste(processing_log(), "\nKey points reset.", sep=""))
@@ -552,6 +584,18 @@ server <- function(input, output, session) {
       text(outline_shape()[kp$blade_right, 1], outline_shape()[kp$blade_right, 2], 
            "BR", col = "green", pos = 4)
     }
+    if(!is.null(kp$shoulder_left)) {
+      points(outline_shape()[kp$shoulder_left, 1], outline_shape()[kp$shoulder_left, 2], 
+             col = "purple", pch = 19, cex = 2)
+      text(outline_shape()[kp$shoulder_left, 1], outline_shape()[kp$shoulder_left, 2], 
+           "SL", col = "purple", pos = 2)
+    }
+    if(!is.null(kp$shoulder_right)) {
+      points(outline_shape()[kp$shoulder_right, 1], outline_shape()[kp$shoulder_right, 2], 
+             col = "purple", pch = 19, cex = 2)
+      text(outline_shape()[kp$shoulder_right, 1], outline_shape()[kp$shoulder_right, 2], 
+           "SR", col = "purple", pos = 4)
+    }
     if(!is.null(kp$base)) {
       points(outline_shape()[kp$base, 1], outline_shape()[kp$base, 2], 
              col = "blue", pch = 19, cex = 2)
@@ -594,7 +638,8 @@ server <- function(input, output, session) {
   output$key_points_info <- renderText({
     kp <- key_points()
     if(is.null(kp$tip) && is.null(kp$blade_left) && 
-       is.null(kp$blade_right) && is.null(kp$base)) {
+       is.null(kp$blade_right) && is.null(kp$shoulder_left) &&
+       is.null(kp$shoulder_right) && is.null(kp$base)) {
       return("No points selected yet.")
     }
     
@@ -602,6 +647,8 @@ server <- function(input, output, session) {
           "Tip: ", if(is.null(kp$tip)) "Not set" else paste("Point", kp$tip), "\n",
           "Left Blade Junction: ", if(is.null(kp$blade_left)) "Not set" else paste("Point", kp$blade_left), "\n",
           "Right Blade Junction: ", if(is.null(kp$blade_right)) "Not set" else paste("Point", kp$blade_right), "\n",
+          "Left Shoulder Junction: ", if(is.null(kp$shoulder_left)) "Not set" else paste("Point", kp$shoulder_left), "\n",
+          "Right Shoulder Junction: ", if(is.null(kp$shoulder_right)) "Not set" else paste("Point", kp$shoulder_right), "\n",
           "Base: ", if(is.null(kp$base)) "Not set" else paste("Point", kp$base))
   })
   
@@ -677,13 +724,14 @@ server <- function(input, output, session) {
       n_points <- nrow(mean_shape)
       
       # Determine region indices based on method
-      if (input$region_method == "manual" && length(key_points()$tip) > 0) {
+      if (input$region_method == "manual") {
         # Use manually selected key points if available
         kp <- key_points()
         
         # Check if all necessary points are selected
         if (is.null(kp$tip) || is.null(kp$blade_left) || 
-            is.null(kp$blade_right) || is.null(kp$base)) {
+            is.null(kp$blade_right) || is.null(kp$shoulder_left) ||
+            is.null(kp$shoulder_right) || is.null(kp$base)) {
           processing_log(paste(current_log, 
                                "\nError: Not all key points are selected for manual region definition.", 
                                sep=""))
@@ -715,6 +763,62 @@ server <- function(input, output, session) {
           tip_region <- c(tip_start:n_points, 1:tip_end)
         }
         
+        # Blade region: between tip and shoulder
+        # For left side
+        left_blade_start <- (tip_end + 1) %% n_points
+        if(left_blade_start == 0) left_blade_start <- n_points
+        left_blade_end <- (kp$shoulder_left - 1) %% n_points
+        if(left_blade_end == 0) left_blade_end <- n_points
+        
+        # For right side
+        right_blade_start <- (kp$shoulder_right + 1) %% n_points
+        if(right_blade_start == 0) right_blade_start <- n_points
+        right_blade_end <- (tip_start - 1) %% n_points
+        if(right_blade_end == 0) right_blade_end <- n_points
+        
+        # Create blade regions with wrap-around handling
+        if(left_blade_start <= left_blade_end) {
+          left_blade_region <- left_blade_start:left_blade_end
+        } else {
+          left_blade_region <- c(left_blade_start:n_points, 1:left_blade_end)
+        }
+        
+        if(right_blade_start <= right_blade_end) {
+          right_blade_region <- right_blade_start:right_blade_end
+        } else {
+          right_blade_region <- c(right_blade_start:n_points, 1:right_blade_end)
+        }
+        
+        # Combine left and right blade regions
+        blade_region <- c(left_blade_region, right_blade_region)
+        
+        # Shoulder region: between blade and base
+        # For left side
+        left_shoulder_start <- kp$shoulder_left
+        left_shoulder_end <- (kp$base - 1) %% n_points
+        if(left_shoulder_end == 0) left_shoulder_end <- n_points
+        
+        # For right side
+        right_shoulder_start <- (kp$base + 1) %% n_points
+        if(right_shoulder_start == 0) right_shoulder_start <- n_points
+        right_shoulder_end <- kp$shoulder_right
+        
+        # Create shoulder regions with wrap-around handling
+        if(left_shoulder_start <= left_shoulder_end) {
+          left_shoulder_region <- left_shoulder_start:left_shoulder_end
+        } else {
+          left_shoulder_region <- c(left_shoulder_start:n_points, 1:left_shoulder_end)
+        }
+        
+        if(right_shoulder_start <= right_shoulder_end) {
+          right_shoulder_region <- right_shoulder_start:right_shoulder_end
+        } else {
+          right_shoulder_region <- c(right_shoulder_start:n_points, 1:right_shoulder_end)
+        }
+        
+        # Combine left and right shoulder regions
+        shoulder_region <- c(left_shoulder_region, right_shoulder_region)
+        
         # Base region: centered around base point
         base_size <- round(n_points * (input$base_ratio/100))
         half_base <- floor(base_size / 2)
@@ -730,37 +834,66 @@ server <- function(input, output, session) {
           base_region <- c(base_start:n_points, 1:base_end)
         }
         
-        # Blade is everything that's not tip or base
-        blade_region <- setdiff(1:n_points, c(tip_region, base_region))
-        
       } else {
         # Automatic region identification based on orientation
-        # Get user-defined proportions
-        tip_prop <- input$tip_ratio / 100
-        base_prop <- input$base_ratio / 100
-        blade_prop <- 1 - tip_prop - base_prop
+        # Get user-defined proportions - ensure percentages sum to 100%
+        total_prop <- (input$tip_ratio + input$blade_ratio + input$shoulder_ratio + input$base_ratio) / 100
+        
+        # Normalize proportions if they don't sum to 1
+        tip_prop <- (input$tip_ratio / 100) / total_prop
+        blade_prop <- (input$blade_ratio / 100) / total_prop
+        shoulder_prop <- (input$shoulder_ratio / 100) / total_prop
+        base_prop <- (input$base_ratio / 100) / total_prop
         
         # Determine region indices based on orientation
         if (input$orientation == "up") {
           # Tip is at the top (start of coords)
           tip_region <- 1:round(n_points * tip_prop)
+          
+          # Base is at the bottom
           base_region <- (round(n_points * (1 - base_prop)) + 1):n_points
-          blade_region <- (max(tip_region) + 1):(min(base_region) - 1)
+          
+          # Shoulder is between blade and base
+          shoulder_start <- round(n_points * (1 - base_prop - shoulder_prop)) + 1
+          shoulder_end <- round(n_points * (1 - base_prop))
+          shoulder_region <- shoulder_start:shoulder_end
+          
+          # Blade is between tip and shoulder
+          blade_region <- (max(tip_region) + 1):(min(shoulder_region) - 1)
+          
         } else if (input$orientation == "down") {
           # Tip is at the bottom (mid of coords)
           mid_point <- round(n_points / 2)
-          tip_start <- mid_point - round(n_points * tip_prop / 2)
-          tip_end <- mid_point + round(n_points * tip_prop / 2)
+          tip_size <- round(n_points * tip_prop)
+          tip_start <- mid_point - round(tip_size / 2)
+          tip_end <- mid_point + round(tip_size / 2)
           tip_region <- tip_start:tip_end
           
-          # Define base as two sections
-          base_size <- round(n_points * base_prop / 2)
-          base_region1 <- 1:base_size
-          base_region2 <- (n_points - base_size + 1):n_points
+          # Base as two sections at top
+          base_size <- round(n_points * base_prop)
+          half_base <- round(base_size / 2)
+          base_region1 <- 1:half_base
+          base_region2 <- (n_points - half_base + 1):n_points
           base_region <- c(base_region1, base_region2)
           
+          # Define shoulder regions on left and right
+          shoulder_size <- round(n_points * shoulder_prop)
+          half_shoulder <- round(shoulder_size / 2)
+          
+          # Left shoulder between base and blade
+          left_shoulder_start <- half_base + 1
+          left_shoulder_end <- left_shoulder_start + half_shoulder - 1
+          
+          # Right shoulder between blade and base
+          right_shoulder_start <- n_points - half_base - half_shoulder + 1
+          right_shoulder_end <- n_points - half_base
+          
+          shoulder_region <- c(left_shoulder_start:left_shoulder_end, 
+                               right_shoulder_start:right_shoulder_end)
+          
           # Blade is the remaining points
-          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
+          
         } else if (input$orientation == "left") {
           # Tip is on the left
           # Find leftmost point (minimum x-coordinate)
@@ -771,7 +904,7 @@ server <- function(input, output, session) {
           tip_size <- round(n_points * tip_prop)
           half_tip <- floor(tip_size / 2)
           
-          # Create indices, ensuring wrap-around if needed
+          # Create indices with wrap-around handling
           tip_start <- (leftmost_idx - half_tip) %% n_points
           if (tip_start == 0) tip_start <- n_points
           tip_end <- (leftmost_idx + half_tip) %% n_points
@@ -804,8 +937,41 @@ server <- function(input, output, session) {
             base_region <- c(base_start:n_points, 1:base_end)
           }
           
-          # Blade is everything that's not tip or base
-          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+          # Define shoulder regions - between blade and base
+          # Top shoulder
+          top_shoulder_size <- round(n_points * shoulder_prop / 2)
+          
+          # Top shoulder (going clockwise from tip to base)
+          top_shoulder_start <- (tip_end + 1) %% n_points
+          if (top_shoulder_start == 0) top_shoulder_start <- n_points
+          top_shoulder_end <- (top_shoulder_start + top_shoulder_size - 1) %% n_points
+          if (top_shoulder_end == 0) top_shoulder_end <- n_points
+          
+          # Bottom shoulder (going counter-clockwise from base to tip)
+          bottom_shoulder_start <- (base_end + 1) %% n_points
+          if (bottom_shoulder_start == 0) bottom_shoulder_start <- n_points
+          bottom_shoulder_end <- (bottom_shoulder_start + top_shoulder_size - 1) %% n_points
+          if (bottom_shoulder_end == 0) bottom_shoulder_end <- n_points
+          
+          # Create shoulder regions with wrap-around handling
+          if (top_shoulder_start <= top_shoulder_end) {
+            top_shoulder_region <- top_shoulder_start:top_shoulder_end
+          } else {
+            top_shoulder_region <- c(top_shoulder_start:n_points, 1:top_shoulder_end)
+          }
+          
+          if (bottom_shoulder_start <= bottom_shoulder_end) {
+            bottom_shoulder_region <- bottom_shoulder_start:bottom_shoulder_end
+          } else {
+            bottom_shoulder_region <- c(bottom_shoulder_start:n_points, 1:bottom_shoulder_end)
+          }
+          
+          # Combine shoulder regions
+          shoulder_region <- c(top_shoulder_region, bottom_shoulder_region)
+          
+          # Blade is everything that's not tip, shoulder, or base
+          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
+          
         } else { # "right"
           # Tip is on the right (find rightmost point)
           x_coords <- mean_shape[, 1]
@@ -848,26 +1014,60 @@ server <- function(input, output, session) {
             base_region <- c(base_start:n_points, 1:base_end)
           }
           
-          # Blade is everything that's not tip or base
-          blade_region <- setdiff(1:n_points, c(tip_region, base_region))
+          # Define shoulder regions - between blade and base
+          # Top shoulder
+          top_shoulder_size <- round(n_points * shoulder_prop / 2)
+          
+          # Top shoulder (going counter-clockwise from tip to base)
+          top_shoulder_start <- (tip_end + 1) %% n_points
+          if (top_shoulder_start == 0) top_shoulder_start <- n_points
+          top_shoulder_end <- (top_shoulder_start + top_shoulder_size - 1) %% n_points
+          if (top_shoulder_end == 0) top_shoulder_end <- n_points
+          
+          # Bottom shoulder (going clockwise from base to tip)
+          bottom_shoulder_start <- (base_end + 1) %% n_points
+          if (bottom_shoulder_start == 0) bottom_shoulder_start <- n_points
+          bottom_shoulder_end <- (bottom_shoulder_start + top_shoulder_size - 1) %% n_points
+          if (bottom_shoulder_end == 0) bottom_shoulder_end <- n_points
+          
+          # Create shoulder regions with wrap-around handling
+          if (top_shoulder_start <= top_shoulder_end) {
+            top_shoulder_region <- top_shoulder_start:top_shoulder_end
+          } else {
+            top_shoulder_region <- c(top_shoulder_start:n_points, 1:top_shoulder_end)
+          }
+          
+          if (bottom_shoulder_start <= bottom_shoulder_end) {
+            bottom_shoulder_region <- bottom_shoulder_start:bottom_shoulder_end
+          } else {
+            bottom_shoulder_region <- c(bottom_shoulder_start:n_points, 1:bottom_shoulder_end)
+          }
+          
+          # Combine shoulder regions
+          shoulder_region <- c(top_shoulder_region, bottom_shoulder_region)
+          
+          # Blade is everything that's not tip, shoulder, or base
+          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
         }
       }
       
       # Ensure regions stay within bounds
       tip_region <- tip_region[tip_region > 0 & tip_region <= n_points]
-      base_region <- base_region[base_region > 0 & base_region <= n_points]
       blade_region <- blade_region[blade_region > 0 & blade_region <= n_points]
+      shoulder_region <- shoulder_region[shoulder_region > 0 & shoulder_region <= n_points]
+      base_region <- base_region[base_region > 0 & base_region <= n_points]
       
       # Create partition
       partition <- rep(0, n_points)
       partition[tip_region] <- 1  # Tip
       partition[blade_region] <- 2  # Blade
-      partition[base_region] <- 3  # Base
+      partition[shoulder_region] <- 3  # Shoulder
+      partition[base_region] <- 4  # Base
       
       # Store results
       modularity_r(list(
         partition = partition,
-        regions = list(tip = tip_region, blade = blade_region, base = base_region),
+        regions = list(tip = tip_region, blade = blade_region, shoulder = shoulder_region, base = base_region),
         n_points = n_points
       ))
       
@@ -1037,8 +1237,8 @@ server <- function(input, output, session) {
     mod <- modularity_r()
     outlines <- outlines_r()
     
-    # Set up the plot layout
-    layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
+    # Set up the plot layout for four regions
+    layout(matrix(c(1,2,3,4,5,6), 3, 2, byrow = TRUE))
     
     # Plot 1: Mean shape with regions colored
     mean_shape <- custom_mshape(outlines$coo)
@@ -1050,6 +1250,7 @@ server <- function(input, output, session) {
     # Plot each region with different colors
     points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
     points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
+    points(mean_shape[mod$regions$shoulder, ], col = "purple", pch = 19, cex = 1)
     points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
     
     # Connect points to show outline
@@ -1058,21 +1259,24 @@ server <- function(input, output, session) {
     # Add region labels
     tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
     blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
+    shoulder_center <- colMeans(mean_shape[mod$regions$shoulder, , drop = FALSE])
     base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
     
     # Add text labels near the center of each region
     text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
     text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
+    text(shoulder_center[1], shoulder_center[2], "SHOULDER", col = "darkmagenta", font = 2)
     text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
     
     # Add legend
-    legend("topright", legend = c("Tip", "Blade", "Base"),
-           col = c("red", "green", "blue"), pch = 19, cex = 0.8)
+    legend("topright", legend = c("Tip", "Blade", "Shoulder", "Base"),
+           col = c("red", "green", "purple", "blue"), pch = 19, cex = 0.8)
     
     # Plot 2: Variance by region
     # Calculate variance in each region across all specimens
     tip_var <- numeric(length(mod$regions$tip))
     blade_var <- numeric(length(mod$regions$blade))
+    shoulder_var <- numeric(length(mod$regions$shoulder))
     base_var <- numeric(length(mod$regions$base))
     
     # For each specimen, calculate distance from mean
@@ -1098,6 +1302,16 @@ server <- function(input, output, session) {
       blade_var[i] <- var(point_dists)
     }
     
+    for (i in 1:length(mod$regions$shoulder)) {
+      point_dists <- numeric(n_specimens)
+      for (j in 1:n_specimens) {
+        spec_point <- outlines$coo[[j]][mod$regions$shoulder[i], ]
+        mean_point <- mean_shape[mod$regions$shoulder[i], ]
+        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+      }
+      shoulder_var[i] <- var(point_dists)
+    }
+    
     for (i in 1:length(mod$regions$base)) {
       point_dists <- numeric(n_specimens)
       for (j in 1:n_specimens) {
@@ -1109,11 +1323,11 @@ server <- function(input, output, session) {
     }
     
     # Calculate mean variance for each region
-    region_vars <- c(mean(tip_var), mean(blade_var), mean(base_var))
-    names(region_vars) <- c("Tip", "Blade", "Base")
+    region_vars <- c(mean(tip_var), mean(blade_var), mean(shoulder_var), mean(base_var))
+    names(region_vars) <- c("Tip", "Blade", "Shoulder", "Base")
     
     # Create barplot
-    barplot(region_vars, col = c("red", "green", "blue"),
+    barplot(region_vars, col = c("red", "green", "purple", "blue"),
             main = "Variance by Region", ylab = "Mean Variance")
     
     # Plot 3: Heat map of variance along outline
@@ -1148,9 +1362,37 @@ server <- function(input, output, session) {
     # Connect points to show outline
     lines(mean_shape, col = "gray")
     
-    # Plot 4: Shape covariance between regions
-    # Calculate pairwise correlations between regions
+    # Plot 4: Region Contributions to PC1
+    # Calculate contributions of each region to PC1 variation
+    pc1_scores <- pca_result_r()$x[,1]
     
+    # Get min and max specimens on PC1
+    pc1_pos_idx <- which.max(pc1_scores)
+    pc1_neg_idx <- which.min(pc1_scores)
+    
+    # Calculate contribution for each region
+    tip_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$tip,] - 
+                                     outlines$coo[[pc1_neg_idx]][mod$regions$tip,])^2)))
+    
+    blade_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$blade,] - 
+                                       outlines$coo[[pc1_neg_idx]][mod$regions$blade,])^2)))
+    
+    shoulder_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$shoulder,] - 
+                                          outlines$coo[[pc1_neg_idx]][mod$regions$shoulder,])^2)))
+    
+    base_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$base,] - 
+                                      outlines$coo[[pc1_neg_idx]][mod$regions$base,])^2)))
+    
+    # Normalize contributions
+    pc1_cont <- c(tip_cont, blade_cont, shoulder_cont, base_cont)
+    pc1_cont <- 100 * pc1_cont / sum(pc1_cont)
+    names(pc1_cont) <- c("Tip", "Blade", "Shoulder", "Base")
+    
+    # Create barplot
+    barplot(pc1_cont, col = c("red", "green", "purple", "blue"),
+            main = "Region Contributions to PC1", ylab = "Contribution (%)")
+    
+    # Plot 5: Region correlation matrix
     # Function to calculate mean distance between two sets of points
     calc_distance <- function(shape1, shape2) {
       return(mean(sqrt(rowSums((shape1 - shape2)^2))))
@@ -1162,6 +1404,7 @@ server <- function(input, output, session) {
     # Matrix to store distances for each region
     tip_dists <- matrix(0, n_specimens, n_specimens)
     blade_dists <- matrix(0, n_specimens, n_specimens)
+    shoulder_dists <- matrix(0, n_specimens, n_specimens)
     base_dists <- matrix(0, n_specimens, n_specimens)
     
     for (i in 1:(n_specimens-1)) {
@@ -1178,6 +1421,12 @@ server <- function(input, output, session) {
           outlines$coo[[j]][mod$regions$blade,]
         )
         
+        # Shoulder distances
+        shoulder_dists[i,j] <- shoulder_dists[j,i] <- calc_distance(
+          outlines$coo[[i]][mod$regions$shoulder,], 
+          outlines$coo[[j]][mod$regions$shoulder,]
+        )
+        
         # Base distances
         base_dists[i,j] <- base_dists[j,i] <- calc_distance(
           outlines$coo[[i]][mod$regions$base,], 
@@ -1188,33 +1437,73 @@ server <- function(input, output, session) {
     
     # Calculate correlations between distance matrices
     tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
+    tip_shoulder_cor <- cor(as.vector(tip_dists), as.vector(shoulder_dists))
     tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
+    blade_shoulder_cor <- cor(as.vector(blade_dists), as.vector(shoulder_dists))
     blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
+    shoulder_base_cor <- cor(as.vector(shoulder_dists), as.vector(base_dists))
     
     # Create correlation matrix
-    cor_matrix <- matrix(1, 3, 3)
+    cor_matrix <- matrix(1, 4, 4)
     cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
-    cor_matrix[1,3] <- cor_matrix[3,1] <- tip_base_cor
-    cor_matrix[2,3] <- cor_matrix[3,2] <- blade_base_cor
+    cor_matrix[1,3] <- cor_matrix[3,1] <- tip_shoulder_cor
+    cor_matrix[1,4] <- cor_matrix[4,1] <- tip_base_cor
+    cor_matrix[2,3] <- cor_matrix[3,2] <- blade_shoulder_cor
+    cor_matrix[2,4] <- cor_matrix[4,2] <- blade_base_cor
+    cor_matrix[3,4] <- cor_matrix[4,3] <- shoulder_base_cor
     
     # Create heatmap
-    image(1:3, 1:3, cor_matrix, axes = FALSE, 
+    image(1:4, 1:4, cor_matrix, axes = FALSE, 
           col = colorRampPalette(c("blue", "white", "red"))(100),
           main = "Region Correlations",
           xlab = "", ylab = "")
-    axis(1, at = 1:3, labels = c("Tip", "Blade", "Base"))
-    axis(2, at = 1:3, labels = c("Tip", "Blade", "Base"))
+    axis(1, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
+    axis(2, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
     
     # Add correlation values
-    text(1, 1, round(cor_matrix[1,1], 2), col = "black")
-    text(1, 2, round(cor_matrix[1,2], 2), col = "black")
-    text(1, 3, round(cor_matrix[1,3], 2), col = "black")
-    text(2, 1, round(cor_matrix[2,1], 2), col = "black")
-    text(2, 2, round(cor_matrix[2,2], 2), col = "black")
-    text(2, 3, round(cor_matrix[2,3], 2), col = "black")
-    text(3, 1, round(cor_matrix[3,1], 2), col = "black")
-    text(3, 2, round(cor_matrix[3,2], 2), col = "black")
-    text(3, 3, round(cor_matrix[3,3], 2), col = "black")
+    for (i in 1:4) {
+      for (j in 1:4) {
+        text(i, j, round(cor_matrix[i,j], 2), col = "black")
+      }
+    }
+    
+    # Plot 6: Modularity index calculation
+    # Calculate CR coefficient (Covariance Ratio) of Adams (2016)
+    # A simplified version - lower values indicate stronger modularity
+    
+    # Create matrices for within and between region covariances
+    within_cov <- 0
+    between_cov <- 0
+    
+    # Calculate within-region covariances
+    tip_cov <- mean(tip_dists[upper.tri(tip_dists)])
+    blade_cov <- mean(blade_dists[upper.tri(blade_dists)])
+    shoulder_cov <- mean(shoulder_dists[upper.tri(shoulder_dists)])
+    base_cov <- mean(base_dists[upper.tri(base_dists)])
+    
+    # Sum within-module covariances
+    within_cov <- tip_cov + blade_cov + shoulder_cov + base_cov
+    
+    # Calculate between-region covariances
+    between_cov <- tip_blade_cor + tip_shoulder_cor + tip_base_cor + 
+      blade_shoulder_cor + blade_base_cor + shoulder_base_cor
+    
+    # Calculate simplified modularity index (lower = more modular)
+    modularity_index <- between_cov / within_cov
+    
+    # Pairwise integration indices
+    pair_indices <- c(tip_blade_cor, tip_shoulder_cor, tip_base_cor, 
+                      blade_shoulder_cor, blade_base_cor, shoulder_base_cor)
+    names(pair_indices) <- c("Tip-Blade", "Tip-Shoulder", "Tip-Base", 
+                             "Blade-Shoulder", "Blade-Base", "Shoulder-Base")
+    
+    # Create barplot of pairwise integration
+    barplot(pair_indices, 
+            main = paste("Integration Between Regions\n(Modularity Index =", 
+                         round(modularity_index, 3), ")"),
+            las = 2, cex.names = 0.7, ylim = c(0, 1),
+            col = rainbow(6))
+    abline(h = 0.5, lty = 2)
     
     # Reset layout
     par(mfrow = c(1, 1))
@@ -1224,7 +1513,7 @@ server <- function(input, output, session) {
           side = 3, line = -2, outer = TRUE, cex = 1.5)
   })
   
-  # Download handler for PDF graphics - fixed version
+  # Download handler for PDF graphics - updated for 4 regions
   output$download_pdf <- downloadHandler(
     filename = function() {
       paste("MorphometricAnalysis_", format(Sys.time(), "%Y%m%d-%H%M%S"), ".pdf", sep = "")
@@ -1341,19 +1630,46 @@ server <- function(input, output, session) {
         title("Shape Variation at PCA Extremes", line = -1)
       }
       
-      # Add modularity plots if available
+      # Add modularity plots if available - updated for 4 regions
       if (!is.null(modularity_r()) && !is.null(outlines_r())) {
         mod <- modularity_r()
         outlines <- outlines_r()
         mean_shape <- custom_mshape(outlines$coo)
         
-        # Set up the plot layout
-        layout(matrix(c(1,2,3,4), 2, 2, byrow = TRUE))
+        # Plot regions on outline
+        plot(mean_shape, type = "n", asp = 1, 
+             main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
         
-        # Calculate variance for each region - must be done here since these variables
-        # aren't available from the renderPlot scope
+        # Plot each region with different colors
+        points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
+        points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
+        points(mean_shape[mod$regions$shoulder, ], col = "purple", pch = 19, cex = 1)
+        points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
+        
+        # Connect points to show outline
+        lines(mean_shape, col = "gray")
+        
+        # Add region labels
+        tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
+        blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
+        shoulder_center <- colMeans(mean_shape[mod$regions$shoulder, , drop = FALSE])
+        base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
+        
+        # Add text labels near the center of each region
+        text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
+        text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
+        text(shoulder_center[1], shoulder_center[2], "SHOULDER", col = "darkmagenta", font = 2)
+        text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
+        
+        # Add legend
+        legend("topright", legend = c("Tip", "Blade", "Shoulder", "Base"),
+               col = c("red", "green", "purple", "blue"), pch = 19, cex = 0.8)
+        
+        # Calculate variance for each region
+        # Calculate variance in each region across all specimens
         tip_var <- numeric(length(mod$regions$tip))
         blade_var <- numeric(length(mod$regions$blade))
+        shoulder_var <- numeric(length(mod$regions$shoulder))
         base_var <- numeric(length(mod$regions$base))
         
         # For each specimen, calculate distance from mean
@@ -1379,6 +1695,16 @@ server <- function(input, output, session) {
           blade_var[i] <- var(point_dists)
         }
         
+        for (i in 1:length(mod$regions$shoulder)) {
+          point_dists <- numeric(n_specimens)
+          for (j in 1:n_specimens) {
+            spec_point <- outlines$coo[[j]][mod$regions$shoulder[i], ]
+            mean_point <- mean_shape[mod$regions$shoulder[i], ]
+            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
+          }
+          shoulder_var[i] <- var(point_dists)
+        }
+        
         for (i in 1:length(mod$regions$base)) {
           point_dists <- numeric(n_specimens)
           for (j in 1:n_specimens) {
@@ -1389,64 +1715,13 @@ server <- function(input, output, session) {
           base_var[i] <- var(point_dists)
         }
         
-        # Plot 1: Mean shape with regions colored and labeled
-        plot(mean_shape, type = "n", asp = 1, 
-             main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
+        # Calculate mean variance for each region
+        region_vars <- c(mean(tip_var), mean(blade_var), mean(shoulder_var), mean(base_var))
+        names(region_vars) <- c("Tip", "Blade", "Shoulder", "Base")
         
-        # Plot each region with different colors
-        points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
-        points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
-        points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
-        
-        # Connect points to show outline
-        lines(mean_shape, col = "gray")
-        
-        # Add region labels
-        tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
-        blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
-        base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
-        
-        # Add text labels near the center of each region
-        text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
-        text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
-        text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
-        
-        # Plot 2: Variance by region
-        region_vars <- c(mean(tip_var), mean(blade_var), mean(base_var))
-        names(region_vars) <- c("Tip", "Blade", "Base")
-        
-        barplot(region_vars, col = c("red", "green", "blue"),
+        # Variance barplot
+        barplot(region_vars, col = c("red", "green", "purple", "blue"),
                 main = "Variance by Region", ylab = "Mean Variance")
-        
-        # Calculate point variances for heatmap
-        point_vars <- numeric(mod$n_points)
-        
-        # Calculate variance at each point
-        for (i in 1:mod$n_points) {
-          point_dists <- numeric(n_specimens)
-          for (j in 1:n_specimens) {
-            spec_point <- outlines$coo[[j]][i, ]
-            mean_point <- mean_shape[i, ]
-            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-          }
-          point_vars[i] <- var(point_dists)
-        }
-        
-        # Normalize variance values to 0-1 range for coloring
-        norm_vars <- (point_vars - min(point_vars)) / (max(point_vars) - min(point_vars))
-        
-        # Plot 3: Heat map of variance along outline
-        plot(mean_shape, type = "n", asp = 1, 
-             main = "Variance Heatmap", axes = FALSE, xlab = "", ylab = "")
-        
-        # Plot points with calculated variance colors
-        for (i in 1:mod$n_points) {
-          col_val <- rgb(norm_vars[i], 0, 1-norm_vars[i])
-          points(mean_shape[i, 1], mean_shape[i, 2], col = col_val, pch = 19, cex = 1.5)
-        }
-        
-        # Connect points to show outline
-        lines(mean_shape, col = "gray")
         
         # Function to calculate mean distance between two sets of points
         calc_distance <- function(shape1, shape2) {
@@ -1457,6 +1732,7 @@ server <- function(input, output, session) {
         # Matrix to store distances for each region
         tip_dists <- matrix(0, n_specimens, n_specimens)
         blade_dists <- matrix(0, n_specimens, n_specimens)
+        shoulder_dists <- matrix(0, n_specimens, n_specimens)
         base_dists <- matrix(0, n_specimens, n_specimens)
         
         for (i in 1:(n_specimens-1)) {
@@ -1473,6 +1749,12 @@ server <- function(input, output, session) {
               outlines$coo[[j]][mod$regions$blade,]
             )
             
+            # Shoulder distances
+            shoulder_dists[i,j] <- shoulder_dists[j,i] <- calc_distance(
+              outlines$coo[[i]][mod$regions$shoulder,], 
+              outlines$coo[[j]][mod$regions$shoulder,]
+            )
+            
             # Base distances
             base_dists[i,j] <- base_dists[j,i] <- calc_distance(
               outlines$coo[[i]][mod$regions$base,], 
@@ -1483,36 +1765,35 @@ server <- function(input, output, session) {
         
         # Calculate correlations between distance matrices
         tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
+        tip_shoulder_cor <- cor(as.vector(tip_dists), as.vector(shoulder_dists))
         tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
+        blade_shoulder_cor <- cor(as.vector(blade_dists), as.vector(shoulder_dists))
         blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
+        shoulder_base_cor <- cor(as.vector(shoulder_dists), as.vector(base_dists))
         
         # Create correlation matrix
-        cor_matrix <- matrix(1, 3, 3)
+        cor_matrix <- matrix(1, 4, 4)
         cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
-        cor_matrix[1,3] <- cor_matrix[3,1] <- tip_base_cor
-        cor_matrix[2,3] <- cor_matrix[3,2] <- blade_base_cor
+        cor_matrix[1,3] <- cor_matrix[3,1] <- tip_shoulder_cor
+        cor_matrix[1,4] <- cor_matrix[4,1] <- tip_base_cor
+        cor_matrix[2,3] <- cor_matrix[3,2] <- blade_shoulder_cor
+        cor_matrix[2,4] <- cor_matrix[4,2] <- blade_base_cor
+        cor_matrix[3,4] <- cor_matrix[4,3] <- shoulder_base_cor
         
-        # Plot 4: Correlation matrix
-        image(1:3, 1:3, cor_matrix, axes = FALSE, 
+        # Plot correlation matrix
+        image(1:4, 1:4, cor_matrix, axes = FALSE, 
               col = colorRampPalette(c("blue", "white", "red"))(100),
               main = "Region Correlations",
               xlab = "", ylab = "")
-        axis(1, at = 1:3, labels = c("Tip", "Blade", "Base"))
-        axis(2, at = 1:3, labels = c("Tip", "Blade", "Base"))
+        axis(1, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
+        axis(2, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
         
         # Add correlation values
-        text(1, 1, round(cor_matrix[1,1], 2), col = "black")
-        text(1, 2, round(cor_matrix[1,2], 2), col = "black")
-        text(1, 3, round(cor_matrix[1,3], 2), col = "black")
-        text(2, 1, round(cor_matrix[2,1], 2), col = "black")
-        text(2, 2, round(cor_matrix[2,2], 2), col = "black")
-        text(2, 3, round(cor_matrix[2,3], 2), col = "black")
-        text(3, 1, round(cor_matrix[3,1], 2), col = "black")
-        text(3, 2, round(cor_matrix[3,2], 2), col = "black")
-        text(3, 3, round(cor_matrix[3,3], 2), col = "black")
-        
-        # Reset layout
-        par(mfrow = c(1, 1))
+        for (i in 1:4) {
+          for (j in 1:4) {
+            text(i, j, round(cor_matrix[i,j], 2), col = "black")
+          }
+        }
       }
       
       dev.off()
