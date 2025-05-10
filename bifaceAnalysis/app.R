@@ -44,6 +44,313 @@ custom_mshape <- function(coo_list) {
   return(mean_shape)
 }
 
+# Calculate discrete curvature along outline points
+calculate_curvature <- function(outline) {
+  n_points <- nrow(outline)
+  curvature <- numeric(n_points)
+  
+  for (i in 1:n_points) {
+    prev_idx <- ifelse(i == 1, n_points, i - 1)
+    next_idx <- ifelse(i == n_points, 1, i + 1)
+    
+    # Vector approach to curvature estimation
+    v1 <- outline[i,] - outline[prev_idx,]
+    v2 <- outline[next_idx,] - outline[i,]
+    
+    # Compute angle between vectors (normalized dot product)
+    dot_prod <- sum(v1 * v2) / (sqrt(sum(v1^2)) * sqrt(sum(v2^2)))
+    # Clamp to handle floating point issues
+    dot_prod <- min(max(dot_prod, -1), 1)
+    curvature[i] <- acos(dot_prod)
+  }
+  
+  return(curvature)
+}
+
+# Smooth curvature values to reduce noise
+smooth_curvature <- function(curvature, window_size = 5) {
+  n_points <- length(curvature)
+  smoothed <- numeric(n_points)
+  
+  half_window <- floor(window_size / 2)
+  
+  for (i in 1:n_points) {
+    # Calculate indices within the window (with wrap-around)
+    indices <- ((i - half_window):(i + half_window)) %% n_points
+    indices[indices == 0] <- n_points
+    
+    # Calculate mean for the window
+    smoothed[i] <- mean(curvature[indices])
+  }
+  
+  return(smoothed)
+}
+
+# Identify significant inflection points
+find_inflection_points <- function(curvature, outline, threshold_factor = 1.5) {
+  # Determine adaptive threshold based on curvature distribution
+  curvature_threshold <- mean(curvature) + threshold_factor * sd(curvature)
+  
+  # Find local maxima exceeding threshold
+  n_points <- length(curvature)
+  inflection_indices <- c()
+  
+  for (i in 2:(n_points-1)) {
+    if (curvature[i] > curvature[i-1] && 
+        curvature[i] > curvature[i+1] && 
+        curvature[i] > curvature_threshold) {
+      inflection_indices <- c(inflection_indices, i)
+    }
+  }
+  
+  # If too few points found, reduce threshold and try again
+  if (length(inflection_indices) < 3) {
+    return(find_inflection_points(curvature, outline, threshold_factor * 0.8))
+  }
+  
+  return(inflection_indices)
+}
+
+# Classify inflection points and define regions
+define_regions <- function(outline, inflection_indices, curvature) {
+  n_points <- nrow(outline)
+  
+  # Find centroid of outline for directional reference
+  centroid <- colMeans(outline)
+  
+  # Calculate distance from each point to centroid
+  distances <- sqrt(rowSums((outline - matrix(rep(centroid, n_points), ncol=2, byrow=TRUE))^2))
+  
+  # Find the tip as the point furthest from centroid with high curvature
+  potential_tips <- inflection_indices[curvature[inflection_indices] > quantile(curvature, 0.9)]
+  if (length(potential_tips) > 0) {
+    tip_idx <- potential_tips[which.max(distances[potential_tips])]
+  } else {
+    # Fallback to farthest point if no high curvature points found
+    tip_idx <- which.max(distances)
+  }
+  
+  # Compute angles relative to centroid
+  angles <- atan2(outline[,2] - centroid[2], outline[,1] - centroid[1])
+  
+  # Create ordered sequence of indices starting from tip
+  tip_to_end <- c(tip_idx:n_points)
+  start_to_tip <- c(1:(tip_idx-1))
+  ordered_indices <- c(tip_idx, tip_to_end[-1], start_to_tip)  # Remove tip from tip_to_end to avoid duplication
+  
+  # Calculate tangent angles around the outline
+  tangent_angles <- numeric(n_points)
+  for (i in 1:n_points) {
+    prev_idx <- ifelse(i == 1, n_points, i - 1)
+    next_idx <- ifelse(i == n_points, 1, i + 1)
+    
+    tangent_x <- outline[next_idx, 1] - outline[prev_idx, 1]
+    tangent_y <- outline[next_idx, 2] - outline[prev_idx, 2]
+    tangent_angles[i] <- atan2(tangent_y, tangent_x)
+  }
+  
+  # Calculate angle changes (first derivative of tangent angle)
+  angle_changes <- numeric(n_points)
+  for (i in 1:n_points) {
+    next_idx <- ifelse(i == n_points, 1, i + 1)
+    change <- tangent_angles[next_idx] - tangent_angles[i]
+    # Normalize to -pi to pi
+    angle_changes[i] <- ((change + pi) %% (2*pi)) - pi
+  }
+  
+  # Find left and right sides of outline relative to tip
+  # We need to identify which direction is clockwise from the tip
+  next_to_tip <- (tip_idx %% n_points) + 1
+  if (next_to_tip == 1) next_to_tip <- n_points
+  
+  # Calculate vectors from centroid to tip and from tip to next point
+  v1 <- outline[tip_idx,] - centroid
+  v2 <- outline[next_to_tip,] - outline[tip_idx,]
+  
+  # Cross product to determine orientation
+  cross_prod <- v1[1]*v2[2] - v1[2]*v2[1]
+  
+  # Based on cross product, determine left and right sides
+  if (cross_prod > 0) {
+    # Clockwise traversal from tip
+    right_indices <- seq(from = tip_idx, to = tip_idx + floor(n_points/2) - 1, by = 1) %% n_points
+    left_indices <- seq(from = tip_idx - 1, to = tip_idx - floor(n_points/2), by = -1) %% n_points
+  } else {
+    # Counter-clockwise traversal from tip
+    left_indices <- seq(from = tip_idx, to = tip_idx + floor(n_points/2) - 1, by = 1) %% n_points
+    right_indices <- seq(from = tip_idx - 1, to = tip_idx - floor(n_points/2), by = -1) %% n_points
+  }
+  
+  # Correct for 0 indices
+  right_indices[right_indices == 0] <- n_points
+  left_indices[left_indices == 0] <- n_points
+  
+  # Find shoulder points using curvature and position
+  # We look for high curvature points along the sides
+  right_side_curvature <- curvature[right_indices]
+  left_side_curvature <- curvature[left_indices]
+  
+  # Calculate distance along outline from tip
+  outline_distance <- numeric(length(right_indices))
+  for (i in 2:length(right_indices)) {
+    prev_point <- outline[right_indices[i-1],]
+    curr_point <- outline[right_indices[i],]
+    outline_distance[i] <- outline_distance[i-1] + sqrt(sum((curr_point - prev_point)^2))
+  }
+  
+  # Normalize distance to proportion of total
+  max_dist <- max(outline_distance)
+  normalized_dist <- outline_distance / max_dist
+  
+  # We expect shoulders to be in the last third of the side
+  potential_right_shoulders <- right_indices[normalized_dist > 0.6 & normalized_dist < 0.9]
+  
+  # If sufficient potential shoulder points found, use curvature to select best one
+  if (length(potential_right_shoulders) > 0) {
+    right_shoulder <- potential_right_shoulders[which.max(curvature[potential_right_shoulders])]
+  } else {
+    # Fallback to position-based approach - roughly 2/3 down the side
+    shoulder_idx <- ceiling(length(right_indices) * 0.7)
+    right_shoulder <- right_indices[shoulder_idx]
+  }
+  
+  # Repeat for left side
+  outline_distance <- numeric(length(left_indices))
+  for (i in 2:length(left_indices)) {
+    prev_point <- outline[left_indices[i-1],]
+    curr_point <- outline[left_indices[i],]
+    outline_distance[i] <- outline_distance[i-1] + sqrt(sum((curr_point - prev_point)^2))
+  }
+  
+  max_dist <- max(outline_distance)
+  normalized_dist <- outline_distance / max_dist
+  
+  potential_left_shoulders <- left_indices[normalized_dist > 0.6 & normalized_dist < 0.9]
+  
+  if (length(potential_left_shoulders) > 0) {
+    left_shoulder <- potential_left_shoulders[which.max(curvature[potential_left_shoulders])]
+  } else {
+    shoulder_idx <- ceiling(length(left_indices) * 0.7)
+    left_shoulder <- left_indices[shoulder_idx]
+  }
+  
+  # Base is approximately opposite from tip
+  base_candidates <- c()
+  if (length(right_indices) > 0 && length(left_indices) > 0) {
+    last_right <- right_indices[length(right_indices)]
+    last_left <- left_indices[length(left_indices)]
+    
+    # Find points between last_right and last_left
+    if (last_right < last_left) {
+      base_candidates <- (last_right:last_left)
+    } else {
+      base_candidates <- c(last_right:n_points, 1:last_left)
+    }
+  }
+  
+  if (length(base_candidates) > 0) {
+    # Base is point furthest from tip
+    tip_coords <- outline[tip_idx,]
+    distances_from_tip <- numeric(length(base_candidates))
+    
+    for (i in 1:length(base_candidates)) {
+      base_point <- outline[base_candidates[i],]
+      distances_from_tip[i] <- sqrt(sum((base_point - tip_coords)^2))
+    }
+    
+    base_idx <- base_candidates[which.max(distances_from_tip)]
+  } else {
+    # Fallback to point opposite tip
+    opposite_angle <- (angles[tip_idx] + pi) %% (2*pi)
+    angle_diff <- abs(angles - opposite_angle)
+    base_idx <- which.min(angle_diff)
+  }
+  
+  # Define region boundaries
+  # Determine tip region size based on tip angle
+  tip_angle <- curvature[tip_idx]
+  tip_region_size <- max(3, round(15 * (1 - tip_angle/pi)))  # Sharper tips get smaller regions
+  
+  # Tip region centered on tip
+  tip_region <- ((tip_idx - tip_region_size):(tip_idx + tip_region_size)) %% n_points
+  tip_region[tip_region == 0] <- n_points
+  
+  # Right blade: between tip and right shoulder
+  if (right_shoulder > tip_idx) {
+    right_blade <- (tip_idx + tip_region_size + 1):(right_shoulder - 1)
+  } else {
+    right_blade <- c((tip_idx + tip_region_size + 1):n_points, 1:(right_shoulder - 1))
+  }
+  right_blade <- right_blade[right_blade > 0 & right_blade <= n_points]
+  
+  # Left blade: between tip and left shoulder
+  if (left_shoulder > tip_idx) {
+    left_blade <- (tip_idx + tip_region_size + 1):(left_shoulder - 1)
+  } else {
+    left_blade <- c((tip_idx + tip_region_size + 1):n_points, 1:(left_shoulder - 1))
+  }
+  left_blade <- left_blade[left_blade > 0 & left_blade <= n_points]
+  
+  # Combine left and right blade regions
+  blade_region <- unique(c(right_blade, left_blade))
+  
+  # Shoulder regions: around shoulder points
+  right_shoulder_region <- ((right_shoulder - 2):(right_shoulder + 2)) %% n_points
+  right_shoulder_region[right_shoulder_region == 0] <- n_points
+  
+  left_shoulder_region <- ((left_shoulder - 2):(left_shoulder + 2)) %% n_points
+  left_shoulder_region[left_shoulder_region == 0] <- n_points
+  
+  shoulder_region <- unique(c(right_shoulder_region, left_shoulder_region))
+  
+  # Base region: between shoulders, centered on base point
+  base_region_size <- floor(n_points/10)  # Approximately 10% of points
+  base_region <- ((base_idx - base_region_size):(base_idx + base_region_size)) %% n_points
+  base_region[base_region == 0] <- n_points
+  
+  # Ensure regions don't overlap and all points are assigned
+  all_assigned <- c(tip_region, blade_region, shoulder_region, base_region)
+  remaining <- setdiff(1:n_points, all_assigned)
+  
+  # Assign remaining points to nearest region
+  if (length(remaining) > 0) {
+    for (pt in remaining) {
+      # Calculate distance to nearest point in each region
+      tip_dist <- min(sqrt(rowSums((outline[pt,] - outline[tip_region,])^2)))
+      blade_dist <- min(sqrt(rowSums((outline[pt,] - outline[blade_region,])^2)))
+      shoulder_dist <- min(sqrt(rowSums((outline[pt,] - outline[shoulder_region,])^2)))
+      base_dist <- min(sqrt(rowSums((outline[pt,] - outline[base_region,])^2)))
+      
+      min_dist <- min(tip_dist, blade_dist, shoulder_dist, base_dist)
+      
+      if (min_dist == tip_dist) {
+        tip_region <- c(tip_region, pt)
+      } else if (min_dist == blade_dist) {
+        blade_region <- c(blade_region, pt)
+      } else if (min_dist == shoulder_dist) {
+        shoulder_region <- c(shoulder_region, pt)
+      } else {
+        base_region <- c(base_region, pt)
+      }
+    }
+  }
+  
+  # Return all regions and key points
+  return(list(
+    tip = tip_region,
+    blade = blade_region,
+    shoulder = shoulder_region,
+    base = base_region,
+    key_points = list(
+      tip = tip_idx,
+      left_shoulder = left_shoulder,
+      right_shoulder = right_shoulder,
+      base = base_idx
+    ),
+    curvature = curvature
+  ))
+}
+
 ui <- fluidPage(
   titlePanel("Projectile Point Shape Analysis"),
   
@@ -88,25 +395,40 @@ ui <- fluidPage(
                               "Right" = "right"),
                   selected = "up"),
       
-      # Add region proportion controls with added shoulder
-      sliderInput("tip_ratio", "Tip proportion (%):", 
-                  min = 10, max = 40, value = 20, step = 5),
-      
-      sliderInput("blade_ratio", "Blade proportion (%):", 
-                  min = 20, max = 60, value = 40, step = 5),
-      
-      sliderInput("shoulder_ratio", "Shoulder proportion (%):", 
-                  min = 10, max = 30, value = 15, step = 5),
-      
-      sliderInput("base_ratio", "Base proportion (%):", 
-                  min = 10, max = 40, value = 20, step = 5),
-      
-      # Add manual region selection controls
-      h4("Region Selection Method"),
+      # Region definition method selection
+      h4("Region Detection Method"),
       radioButtons("region_method", "Method:", 
-                   choices = c("Automatic" = "auto",
+                   choices = c("Geometric (Shape-based)" = "geometric",
+                               "Proportional (Percentage-based)" = "proportional",
                                "Manual key points" = "manual"),
-                   selected = "auto"),
+                   selected = "geometric"),
+      
+      # Show region proportions only when using proportional method
+      conditionalPanel(
+        condition = "input.region_method == 'proportional'",
+        # Add region proportion controls with added shoulder
+        sliderInput("tip_ratio", "Tip proportion (%):", 
+                    min = 10, max = 40, value = 20, step = 5),
+        
+        sliderInput("blade_ratio", "Blade proportion (%):", 
+                    min = 20, max = 60, value = 40, step = 5),
+        
+        sliderInput("shoulder_ratio", "Shoulder proportion (%):", 
+                    min = 10, max = 30, value = 15, step = 5),
+        
+        sliderInput("base_ratio", "Base proportion (%):", 
+                    min = 10, max = 40, value = 20, step = 5),
+      ),
+      
+      # Show geometric detection parameters when using geometric method
+      conditionalPanel(
+        condition = "input.region_method == 'geometric'",
+        sliderInput("curvature_threshold", "Curvature sensitivity:", 
+                    min = 0.5, max = 2.5, value = 1.5, step = 0.1),
+        
+        sliderInput("curvature_smoothing", "Curvature smoothing:", 
+                    min = 1, max = 11, value = 5, step = 2)
+      ),
       
       conditionalPanel(
         condition = "input.region_method == 'manual'",
@@ -143,7 +465,24 @@ ui <- fluidPage(
       
       h4("Downloads"),
       downloadButton("download_pdf", "Download Graphics (PDF)", 
-                     class = "btn-danger")
+                     class = "btn-danger"),
+      
+      hr(),
+      
+      div(style = "text-align: center; margin-top: 10px;",
+          tags$p("Source code and documentation:"),
+          tags$a(
+            href = "https://github.com/clipo/bifaceAnalysis",
+            target = "_blank",  # Opens in new tab
+            div(
+              style = "display: inline-flex; align-items: center; color: #333; text-decoration: none; border: 1px solid #ddd; border-radius: 5px; padding: 5px 10px; background: #f8f8f8;",
+              tags$img(src = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", 
+                       height = "20px",
+                       style = "margin-right: 5px;"),
+              "GitHub Repository"
+            )
+          )
+      )
     ),
     
     mainPanel(
@@ -199,6 +538,7 @@ server <- function(input, output, session) {
   pca_result_r <- reactiveVal()
   tps_grid_r <- reactiveVal()
   modularity_r <- reactiveVal()
+  curvature_r <- reactiveVal()
   
   # Additional reactive values for manual key points
   key_points_mode <- reactiveVal(FALSE)
@@ -448,6 +788,17 @@ server <- function(input, output, session) {
       interp <- coo_interpolate(selected_contour, n = 100)
       outline_shape(interp)
       
+      # Calculate curvature for geometric detection
+      if (input$region_method == "geometric") {
+        curv <- calculate_curvature(interp)
+        # Apply smoothing based on user parameter
+        window_size <- ceiling(input$curvature_smoothing / 2) * 2 + 1  # Ensure odd number
+        smoothed_curv <- smooth_curvature(curv, window_size)
+        curvature_r(smoothed_curv)
+        
+        log_text <- paste0(log_text, "Calculated curvature for geometric region detection\n")
+      }
+      
       # Add to outlines list
       out_list <- outlines_list()
       name_list <- names_list()
@@ -563,6 +914,53 @@ server <- function(input, output, session) {
     
     # Plot outline
     plot(outline_shape(), type = "l", asp = 1, main = "Extracted Outline")
+    
+    # If using geometric method and curvature has been calculated, show it
+    if(input$region_method == "geometric" && !is.null(curvature_r())) {
+      # Add curvature visualization as color along the outline
+      curv <- curvature_r()
+      # Normalize curvature to 0-1 scale for coloring
+      norm_curv <- (curv - min(curv)) / (max(curv) - min(curv))
+      
+      # Plot points with color based on curvature
+      for(i in 1:nrow(outline_shape())) {
+        # Higher curvature = more red
+        col_val <- rgb(norm_curv[i], 0, 1-norm_curv[i])
+        points(outline_shape()[i, 1], outline_shape()[i, 2], 
+               col = col_val, pch = 19, cex = 1)
+      }
+      
+      # Add a legend for curvature
+      gradient_colors <- sapply(seq(0, 1, length.out = 10), function(x) {
+        rgb(x, 0, 1-x)
+      })
+      
+      # Draw legend in the corner
+      legend_x <- min(outline_shape()[,1]) + 0.1 * (max(outline_shape()[,1]) - min(outline_shape()[,1]))
+      legend_y <- min(outline_shape()[,2]) + 0.1 * (max(outline_shape()[,2]) - min(outline_shape()[,2]))
+      
+      # Small rectangle for the legend
+      rect(legend_x, legend_y, 
+           legend_x + 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1])), 
+           legend_y + 0.05 * (max(outline_shape()[,2]) - min(outline_shape()[,2])),
+           col = "white", border = "black")
+      
+      # Add colored points for the gradient
+      for(i in 1:length(gradient_colors)) {
+        x_pos <- legend_x + (i-1)/9 * 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1]))
+        points(x_pos, legend_y + 0.025 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
+               col = gradient_colors[i], pch = 19, cex = 1.5)
+      }
+      
+      # Add labels
+      text(legend_x, legend_y + 0.07 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
+           "Curvature", pos = 4, cex = 0.8)
+      text(legend_x, legend_y - 0.02 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
+           "Low", pos = 4, cex = 0.7)
+      text(legend_x + 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1])), 
+           legend_y - 0.02 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
+           "High", pos = 2, cex = 0.7)
+    }
     
     # Show key points if any exist
     kp <- key_points()
@@ -749,7 +1147,7 @@ server <- function(input, output, session) {
         }
         
         # Tip region: centered around tip point
-        tip_size <- round(n_points * (input$tip_ratio/100))
+        tip_size <- round(n_points * (20/100))  # Use default 20% for tip
         half_tip <- floor(tip_size / 2)
         tip_start <- (kp$tip - half_tip) %% n_points
         if(tip_start == 0) tip_start <- n_points
@@ -820,7 +1218,7 @@ server <- function(input, output, session) {
         shoulder_region <- c(left_shoulder_region, right_shoulder_region)
         
         # Base region: centered around base point
-        base_size <- round(n_points * (input$base_ratio/100))
+        base_size <- round(n_points * (20/100))  # Use default 20% for base
         half_base <- floor(base_size / 2)
         base_start <- (kp$base - half_base) %% n_points
         if(base_start == 0) base_start <- n_points
@@ -834,7 +1232,42 @@ server <- function(input, output, session) {
           base_region <- c(base_start:n_points, 1:base_end)
         }
         
+      } else if (input$region_method == "geometric") {
+        # Geometric region detection based on shape features
+        
+        # Calculate curvature if not already done
+        if (is.null(curvature_r())) {
+          curv <- calculate_curvature(mean_shape)
+          window_size <- ceiling(input$curvature_smoothing / 2) * 2 + 1  # Ensure odd number
+          smoothed_curv <- smooth_curvature(curv, window_size)
+        } else {
+          smoothed_curv <- curvature_r()
+        }
+        
+        # Find inflection points
+        inflection_points <- find_inflection_points(smoothed_curv, mean_shape, input$curvature_threshold)
+        
+        # Define regions
+        regions <- define_regions(mean_shape, inflection_points, smoothed_curv)
+        
+        # Extract regions
+        tip_region <- regions$tip
+        blade_region <- regions$blade
+        shoulder_region <- regions$shoulder
+        base_region <- regions$base
+        
+        # Log key points
+        log_text <- paste(current_log, 
+                          "\nGeometric detection found key points:",
+                          "\nTip: Point ", regions$key_points$tip,
+                          "\nLeft shoulder: Point ", regions$key_points$left_shoulder,
+                          "\nRight shoulder: Point ", regions$key_points$right_shoulder,
+                          "\nBase: Point ", regions$key_points$base,
+                          sep="")
+        processing_log(log_text)
+        
       } else {
+        # Proportional region identification based on orientation and percentages
         # Automatic region identification based on orientation
         # Get user-defined proportions - ensure percentages sum to 100%
         total_prop <- (input$tip_ratio + input$blade_ratio + input$shoulder_ratio + input$base_ratio) / 100
@@ -1532,6 +1965,7 @@ server <- function(input, output, session) {
       text(0.5, 0.6, "Morphometric Analysis Results", cex = 2)
       text(0.5, 0.5, paste("Generated on", format(Sys.Date(), "%B %d, %Y")), cex = 1.2)
       text(0.5, 0.4, paste("Number of specimens:", length(outlines_r()$coo)), cex = 1.2)
+      text(0.5, 0.3, paste("Region detection method:", input$region_method), cex = 1.2)
       
       # Grid of outlines
       panel(outlines_r(), names = TRUE, cex.names = 0.7)
