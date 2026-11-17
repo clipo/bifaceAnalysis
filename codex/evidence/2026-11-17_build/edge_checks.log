@@ -1,0 +1,56 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+L 3.3166247903553998 centroid 0 0 
+cyclic shift 0 base 0 -4 
+cyclic shift 1 base 0 -4 
+cyclic shift 2 base 0 -4 
+cyclic shift 3 base 0 -4 
+cyclic shift 4 base 0 -4 
+cyclic shift 5 base 0 -4 
+cyclic shift 6 base 0 -4 
+cyclic shift 7 base 0 -4 
+cyclic shift 8 base 0 -4 
+cyclic shift 9 base 0 -4 
+base 0 -4 zero/nearzero segments 1 
+              x  y
+ [1,]  0.000000  4
+ [2,]  1.000000  3
+ [3,]  1.000000  1
+ [4,] -3.316625  1
+ [5,] -3.316625 -1
+ [6,]  1.000000 -1
+ [7,]  1.000000 -3
+ [8,]  0.000000 -4
+ [9,]  0.000000 -4
+[10,]  2.000000 -3
+[11,]  2.000000  3
+base 0 -4 zero/nearzero segments 0 
+              x  y
+ [1,]  0.000000  4
+ [2,]  1.000000  3
+ [3,]  1.000000  1
+ [4,] -3.316625  1
+ [5,] -3.316625 -1
+ [6,]  1.000000 -1
+ [7,]  1.000000 -3
+ [8,]  0.000000 -4
+ [9,]  2.000000 -3
+[10,]  2.000000  3
+base -4.225094e-14 -1 zero/nearzero segments 0 
+                  x  y
+ [1,]  7.300348e-17  4
+ [2,]  1.000000e+00  3
+ [3,]  1.000000e+00  1
+ [4,] -3.316625e+00  1
+ [5,] -3.316625e+00 -1
+ [6,] -4.226919e-14 -1
+ [7,]  1.000000e+00 -1
+ [8,]  1.000000e+00 -3
+ [9,] -7.300348e-17 -4
+[10,]  2.000000e+00 -3
+[11,]  2.000000e+00  3
+  edge y
+1    1 0
+2    2 0
+Fixed-threshold crop marker max error 0 
+Stale crop beyond narrower image subscript out of bounds 
+RV rescaling 1 NA 

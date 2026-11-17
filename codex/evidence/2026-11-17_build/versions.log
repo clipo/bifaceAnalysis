@@ -1,0 +1,13 @@
+R version 4.6.2 (2026-10-29) 
+shiny 1.14.0 
+bslib 0.12.0 
+imager 1.0.8 
+ggplot2 4.0.3 
+testthat 3.3.2 
+cluster 2.1.8.3 
+rsconnect 1.11.2 
+Momocs 1.4.1 
+geomorph 4.1.2 
+pdftotext version 26.11.0
+Copyright 2005-2026 The Poppler Developers - http://poppler.freedesktop.org
+Copyright 1996-2011, 2022 Glyph & Cog, LLC

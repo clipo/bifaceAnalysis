@@ -1,0 +1,27 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+Loading required package: shiny
+
+Attaching package: ‘bslib’
+
+The following object is masked from ‘package:utils’:
+
+    page
+
+Before clear own/current/shared 10 10 10 
+After clear own/current/shared NA 10 10 
+Shared unchecked next image current NA 
+New source reused id artifact1.jpg state identical TRUE image width 134 crop 0 240 70 170 
+Replacement upload state identical TRUE 
+Valid manual ok TRUE 
+Invalid replacement manual ok FALSE message The tip and base landmarks fall on the same outline point. Click two different places. 
+Identical shapes n 1 figure statuses stack message; meas plot; power message; recon message; morpho message; scree message; stab message; pcs message; dend message; sil message; regions message; pvar message; rvar message; rv message 
+Identical shapes n 1 text statuses outlines message; meas text; harm message; pca message; stab message; pcs message; clust message; regions message 
+Identical shapes n 2 figure statuses stack plot; meas plot; power plot; recon plot; morpho message; scree message; stab message; pcs message; dend message; sil message; regions plot; pvar plot; rvar plot; rv message 
+Identical shapes n 2 text statuses outlines text; meas text; harm text; pca message; stab message; pcs message; clust message; regions text 
+Identical shapes n 3 figure statuses stack plot; meas plot; power plot; recon plot; morpho message; scree plot; stab message; pcs plot; dend message; sil message; regions plot; pvar plot; rvar plot; rv message 
+Identical shapes n 3 text statuses outlines text; meas text; harm text; pca message; stab message; pcs text; clust message; regions text 
+Identical shapes n 3 PCA rank 1 max coefficient row difference 0 retained variance 1.508674e-36 morphospace message This result needs at least 2 components of shape variation. These specimens have 1. 
+Identical shapes n 4 figure statuses stack plot; meas plot; power plot; recon plot; morpho message; scree message; stab message; pcs message; dend plot; sil plot; regions plot; pvar plot; rvar plot; rv message 
+Identical shapes n 4 text statuses outlines text; meas text; harm text; pca message; stab message; pcs message; clust text; regions text 
+Identical shapes n 4 PCA rank 0 max coefficient row difference 0 retained variance 0 morphospace message The saved outlines are identical in shape, so there is no shape variation to analyse.
+This result needs at least 2 components of shape variation. These specimens have 0. 

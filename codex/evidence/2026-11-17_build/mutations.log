@@ -1,0 +1,70 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+shape: ........................................................
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+stability plane always one tests 9 failures 0 errors 0 
+shape: ........................................................
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+PC2 never separable tests 9 failures 0 errors 0 
+shape: ........................................................
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+RV reference equals observation no permutations tests 9 failures 0 errors 0 
+store: .......................................
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+ignore loaded metadata on identical contour tests 3 failures 0 errors 0 
+outline: ...................................................................
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+manual landmarks reverse left and right edges tests 13 failures 0 errors 0 
+image: .........123..........................................
+
+══ Failed ══════════════════════════════════════════════════════════════════════
+── 1. Failure ('test-image.R:27:3'): the largest region not touching the border 
+Expected `any(s$mask & !big)` to be FALSE.
+Differences:
+`actual`:   TRUE 
+`expected`: FALSE
+
+
+── 2. Failure ('test-image.R:28:3'): the largest region not touching the border 
+Expected `sum(big & !s$mask)` <= 4L.
+Actual comparison: 1961 > 4
+Difference: 1957 > 0
+
+── 3. Failure ('test-image.R:29:3'): the largest region not touching the border 
+Expected `all(s$mask[disc(60, 55, 6)])` to be TRUE.
+Differences:
+`actual`:   FALSE
+`expected`: TRUE 
+
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+disc returns smaller interior component tests 6 failures 3 errors 0 
+shape: ................1..2..3..4..............................
+
+══ Failed ══════════════════════════════════════════════════════════════════════
+── 1. Failure ('test-shape.R:38:5'): symmetric shapes have no asymmetry and unit
+Expected `asymmetry_score(s, pair)` < 1e-10.
+Actual comparison: 0.1089058526 >= 0.0000000001
+Difference: 0.1089058525 >= 0
+
+── 2. Failure ('test-shape.R:38:5'): symmetric shapes have no asymmetry and unit
+Expected `asymmetry_score(s, pair)` < 1e-10.
+Actual comparison: 0.0913365289 >= 0.0000000001
+Difference: 0.0913365288 >= 0
+
+── 3. Failure ('test-shape.R:38:5'): symmetric shapes have no asymmetry and unit
+Expected `asymmetry_score(s, pair)` < 1e-10.
+Actual comparison: 0.1326773230 >= 0.0000000001
+Difference: 0.1326773229 >= 0
+
+── 4. Failure ('test-shape.R:38:5'): symmetric shapes have no asymmetry and unit
+Expected `asymmetry_score(s, pair)` < 1e-10.
+Actual comparison: 0.0716649683 >= 0.0000000001
+Difference: 0.0716649682 >= 0
+
+══ DONE ════════════════════════════════════════════════════════════════════════
+no-op symmetrization tests 9 failures 4 errors 0 

@@ -1,0 +1,59 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+HEAD 5b0ec11c1b7af780c9d37e79b6f2037332c96d4b 
+Fixture versions
+  Momocs geomorph   imager        R 
+ "1.4.1"  "4.1.2"  "1.0.8"  "4.6.2" 
+artifact1.jpg dimensions 244 176 tip 5 97.5 base 226 113.9229 distance 8.881784e-16 2.842171e-14 crop landmark max difference 0.04812449 
+artifact2.jpg dimensions 278 182 tip 11 105.5 base 264 123.8687 distance 0 5.684342e-14 crop landmark max difference 0.01621129 
+artifact3.jpg dimensions 194 186 tip 13 113.5 base 184.3328 124.8328 distance 3.552714e-15 1.421085e-14 crop landmark max difference 0.1352301 
+artifact4.jpg dimensions 134 170 tip 5 123.5 base 119 116.4917 distance 1.947927e-14 2.842171e-14 crop landmark max difference 1 
+null device 
+          1 
+Notch returned outline and base row
+      x  y
+[1,]  0 10
+[2,] -3  0
+[3,] -2 -3
+[4,]  0 -1
+[5,]  2 -3
+[6,]  3  0
+[1] 4
+Notch consecutive zero segments 0 
+Manual vs auto point maximum error 0 
+Notch direct Fourier 0 
+Independent quadrature coefficient max error 3.145939e-11 
+Momocs rolled error 5.854692e-17 unrolled error 0.00258335 
+GPA geomorph maximum error 1.275032e-06 
+Reflection guard pair-distance max error 5.551115e-17 
+RNG absent restored TRUE 
+RV scaled nonconstant block 1 NA 
+Collinear CSV accepted count 1 measurements
+  specimen group length_px width_px area_px2 length_mm width_mm area_mm2
+1     line               0        4        0        NA       NA       NA
+  length_width_ratio widest_position px_per_mm    asymmetry
+1                  0             NaN        NA 1.415262e-16
+CSV huge accepted TRUE 
+[1] "ERROR infinite or missing values in 'x'"
+[1] "ERROR infinite or missing values in 'x'"
+[1] "line"
+CSV inf accepted TRUE 
+[1] "ERROR infinite or missing values in 'x'"
+[1] "ERROR infinite or missing values in 'x'"
+[1] "line"
+CSV zero_tip_base accepted TRUE 
+  specimen group length_px width_px area_px2 length_mm width_mm area_mm2
+1     line               2        4        0        NA       NA       NA
+  length_width_ratio widest_position px_per_mm asymmetry
+1                0.5          0.4975        NA 0.9493288
+[1] "ERROR missing value where TRUE/FALSE needed"
+[1] "line"
+CSV empty_id accepted TRUE 
+  specimen group length_px width_px area_px2 length_mm width_mm area_mm2
+1     line               0        4        0        NA       NA       NA
+  length_width_ratio widest_position px_per_mm    asymmetry
+1                  0             NaN        NA 1.415262e-16
+[1] 0
+[1] ""
+Opposite polarity candidate warnings  selected pixels 5929 
+Sampled circle selected H 6 residual power 2.761475e-30 
+Disc note omitted cells 4 outside cells 0 unfilled hole cells 0 
