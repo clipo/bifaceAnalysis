@@ -1,0 +1,202 @@
+{
+  "summary": "Audited the complete specification, current app, README and four demo images at HEAD a85cb88d0e3f966e553b23e0be5958612b7a38e7. The specification is not ready to build: automatic segmentation fails on three demos, and the ellipse acceptance test contradicts the specified Fourier transform. The report and reproducible calculations are saved under codex/.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:126-134, 317-318, 361-362",
+      "claim": "Automatic settings produce one closed artifact outline without warnings for every demo.",
+      "problem": "Border-majority polarity selects the dark background in images 1, 2 and 4. Hole filling then absorbs the artifact into that component. The resulting masks touch the border and yield open contours.",
+      "evidence": "checks.log records light-border fractions of 0.525119617225, 0.520742358079, 0.310846560847 and 0.539735099338. Images 1, 2 and 4 each yield two open contours. Image 3 yields one closed 725-vertex contour. The prototype used whole images, Otsu thresholding, disk opening radius 2 and 4-connectivity.",
+      "repair": "Revise automatic polarity to handle light margins and the top ruler. Specify connectivity, opening kernel and border handling. Reject unusable masks before analysis.",
+      "acceptance_check": "All four unchanged JPEGs produce one closed artifact contour, excluding the ruler, with no border contact and with enclosed ink holes filled. Compare against reference masks so closure alone cannot certify the background.",
+      "supersedes": ""
+    },
+    {
+      "id": "F2",
+      "severity": "blocking",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:247-253",
+      "claim": "The 3-by-1 ellipse has first-harmonic amplitudes 3 and 1 and higher harmonics below 1e-4.",
+      "problem": "These expectations apply to angular parameterization. The specified equations use arc length, under which a noncircular ellipse has higher harmonics. Correct code cannot pass this test.",
+      "evidence": "The independent 2000-vertex calculation gives first-harmonic amplitudes 2.62452424251 and 1.09927297350, and a third-harmonic coefficient of 0.241790947734. Maximum disagreement with installed Momocs 1.4.1 is 3.47e-18.",
+      "repair": "Retain the equations. Replace the ellipse expectation with verified arc-length fixture values, and use a circle for the first-harmonic-only test.",
+      "acceptance_check": "Independent coefficients and Momocs agree within 1e-8 using the same polygon and phase convention; revised ellipse and circle tests pass.",
+      "supersedes": ""
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:224-253, 267-270",
+      "claim": "The EFA specification determines reconstruction, Momocs matching and automatic harmonic selection.",
+      "problem": "The inverse, constant terms, phase origin, evaluation positions and reconstruction error metric are missing. Landmark-centering does not force the arc-length mean to zero. The cumulative-power denominator and zero-higher-power behavior are undefined.",
+      "evidence": "Only n=1..H equations are supplied. Reconstruction is required 'within a stated tolerance' without a tolerance. Installed Momocs begins its first segment at the last vertex. A centered triangle has Fourier DC coordinates (0.0274850704906, 0.0393039712659), recorded in checks.log.",
+      "repair": "Specify the inverse and constant-term convention, closure, t=0, evaluation positions and plotting frame. Reconcile the Momocs phase explicitly. Define a fixed reference spectrum for selecting H and handle zero residual power.",
+      "acceptance_check": "An asymmetric polygon matches the documented Momocs comparison and reconstructs in the declared frame. Circle, sharp-polygon, H-below-16 and zero-residual-power cases have deterministic results.",
+      "supersedes": ""
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:148-161, 363-367",
+      "claim": "Orientation and landmark selection determine T, B and u for every outline.",
+      "problem": "At exactly 45 degrees, both principal axes qualify under an inclusive bound and neither under a strict bound. Flat or broken tips can have several projection maxima. Manual clicks lack boundary-snapping and invalid-landmark rules.",
+      "evidence": "Step 2 selects an axis 'within 45 degrees'; step 4 selects 'the outline point with the largest projection'. Neither specifies ties. Step 6 does not require distinct boundary landmarks or define insertion into segments.",
+      "repair": "Specify axis and tip tie handling, manual-resolution rules for ambiguous tips, projection of clicks onto the boundary, insertion of B and rejection of coincident landmarks.",
+      "acceptance_check": "Explicit fixtures cover exact 45 degrees, flat and truncated tips, near-circles, wider-than-long shapes, basal notches and multiple midline crossings. Expected landmarks or required manual intervention are invariant to contour start index.",
+      "supersedes": ""
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:165-175, 283-287, 368",
+      "claim": "Two 100-point edge samples give 200 distinct coordinates with T at 1 and B at 101.",
+      "problem": "Endpoint inclusion is unspecified. Inclusive sampling duplicates both landmarks, leaving 198 distinct points and zero-length EFA segments. The second edge also needs a reversed tip-to-base fraction map and explicit region-boundary ownership.",
+      "evidence": "Section 6.3 specifies starting landmarks but not excluded endpoints. checks.log reproduces 200 rows and 198 distinct points. Section 7.6 measures both edges from tip 0 to base 1, although the second stored edge starts at B.",
+      "repair": "Sample each directed edge at j/100 for j=0..99, excluding its destination. Specify second-edge tip fractions as 1-j/100, mirror relabelling and nonoverlapping region intervals. Define spacing along the source contour.",
+      "acceptance_check": "A simple asymmetric polygon has 200 distinct points, T only at 1, B only at 101, positive segment lengths and exactly one region assignment per point.",
+      "supersedes": ""
+    },
+    {
+      "id": "F6",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:204-206, 257-270, 352-353",
+      "claim": "Same-number leave-one-out PC cosines describe stability, and PC1-to-PC3 reconstructions are available when PCA starts at n=3.",
+      "problem": "Nearly tied axes can exchange order or rotate within an unchanged subspace. Ordered-vector cosines cannot distinguish this from loss of the represented variation. At n=3, the full fit has rank at most 2 and leave-one-out fits rank at most 1.",
+      "evidence": "For observations (1.01,0), (-1.01,0), (0,1), (0,-1), omitting the first observation gives PC1/PC2 cosines 0/0 while both subspace principal-angle cosines remain 1. These calculations and the small-sample ranks are in checks.log.",
+      "repair": "Report principal angles for a declared leading eigenspace, with a rule for near-tied eigenvalue groups. Restrict individual-axis diagnostics to identifiable axes. Freeze H, specify whether GPA is refitted, and gate outputs by numerical rank.",
+      "acceptance_check": "The order-swap fixture reports a stable subspace and ambiguous individual axes. Three specimens produce neither PC3 nor a rank-2 leave-one-out stability claim. Identical shapes receive explicit unavailable messages.",
+      "supersedes": ""
+    },
+    {
+      "id": "F7",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:119-121, 179-190, 347-350",
+      "claim": "Maximum width has a defined longitudinal position, and calibration transfers across independently downscaled images.",
+      "problem": "Transverse bounding extent can involve extrema at different heights, so it has no unique longitudinal position. Maximum-width positions can also tie. Copying a millimetres-per-downscaled-pixel factor across unequal resize factors gives incorrect measurements. 'Full-resolution outline' is ambiguous after downscaling.",
+      "evidence": "Width is defined as 'extent perpendicular to u', followed by its position along length. Section 6.1 declares all coordinates downscaled, while section 6.4 requests full-resolution measurements and batch calibration.",
+      "repair": "Distinguish transverse extent from cross-sectional width. Define cross-sections, ties, notches and the base reference. Store resize/crop transforms and transfer calibration through original-pixel units, or disallow transfer across unequal resize factors. State units and what full-resolution means.",
+      "acceptance_check": "Rectangle, ellipse, slanted and notched fixtures yield declared widths and positions. Images with resize factors 1 and 0.5 retain correct physical measurements through cropping and batch calibration.",
+      "supersedes": ""
+    },
+    {
+      "id": "F8",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:194-200, 210-220, 283-287, 319-336",
+      "claim": "CSV reload restores the specimen store, and setting changes reproducibly update analysis.",
+      "problem": "The CSV schema does not define restoration of calibration, groups, full contours, landmarks or settings. Editable names and duplicate basenames leave identity unresolved. Saved-versus-preview updates and symmetrization order are unspecified; averaging with a mirror can change centroid size.",
+      "evidence": "The store contains two outline representations and metadata but is exported as a 'CSV of outline coordinates'. Results recompute when settings change. Symmetrization is described only as averaging a configuration with its relabelled mirror.",
+      "repair": "Define a versioned persistence schema and stable IDs. Separate preview processing, saved raw specimens and global analysis settings. Specify symmetrization and subsequent normalization, raw-measurement provenance, invalidation rules and reload/merge behavior.",
+      "acceptance_check": "Export/restart/reload reproduces measurements, groups, outlines and analysis. Duplicate names do not overwrite unrelated specimens. Symmetry toggling restores original results, while H and region changes preserve saved pixel coordinates and calibration.",
+      "supersedes": ""
+    },
+    {
+      "id": "F9",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:294-311",
+      "claim": "The permutation range represents RV with no association, and Bayesian covariance modeling is intractable here.",
+      "problem": "Shuffling frozen aligned blocks is a valid conditional descriptive reference, but does not preserve covariance induced by common GPA. It is not an independence reference for parts processed through the entire pipeline. RV normalization and zero-variance behavior are unspecified. Bayesian intractability is unsubstantiated and unnecessary under the descriptive-method exception.",
+      "evidence": "The spec shuffles one block after common alignment while acknowledging alignment-induced covariance. [Klingenberg's permutation section](https://onlinelibrary.wiley.com/doi/10.1111/j.1525-142X.2009.00347.x) distinguishes frozen-coordinate shuffling from refitting for a joint-fit independence reference. Shared conventions explicitly permit descriptive frequentist methods.",
+      "repair": "Provide the centered-block trace formula and undefined-denominator behavior. Label the range as conditional re-pairing of fixed coordinates, or specify a justified refitting reference. Use the descriptive exception rather than an unsupported computational-feasibility claim.",
+      "acceptance_check": "RV matches the trace formula, equals 1 for a nonconstant block against itself, and is unavailable for constant blocks. Fixed-seed results reproduce. Interpretation does not call the range an uncertainty interval or a correction for GPA-induced association.",
+      "supersedes": ""
+    },
+    {
+      "id": "F10",
+      "severity": "minor",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:89-110, 275-279, 357-386",
+      "claim": "The named dependencies fully specify the functions needed for every feature.",
+      "problem": "Silhouette width has no supplied function in the four runtime packages or base R. A custom implementation is feasible but not specified. Development dependencies also need a separate declaration.",
+      "evidence": "Section 7.5 promises mean silhouette width. The standard function is [cluster::silhouette](https://cran.r-project.org/web/packages/cluster/refman/cluster.html). Section 10 additionally uses testthat, shinytest2 and rsconnect.",
+      "repair": "Declare cluster or specify a base-R silhouette implementation, including singleton and coincident-point cases. List test, fixture-generation and deployment dependencies separately.",
+      "acceptance_check": "Silhouette fixtures agree with cluster::silhouette, including singleton clusters and duplicate points. Clean testing and runtime dependency scans match the declared dependency sets.",
+      "supersedes": ""
+    },
+    {
+      "id": "F11",
+      "severity": "major",
+      "classification": "not_demonstrated",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:247-253, 355-386",
+      "claim": "The acceptance list provides an objective pass/fail gate.",
+      "problem": "Several entries specify topics without expected values, error metrics or tolerances. Otsu can have tied thresholds; PCA comparisons need to handle tied eigenspaces. Nonempty downloads do not establish valid content or restorable data.",
+      "evidence": "Orientation says 'within tolerance'; inverse reconstruction says 'within a stated tolerance' without stating one. Measurement and GPA tests omit numeric criteria. Download checks require only non-emptiness.",
+      "repair": "Specify fixture geometries, expected outputs, tolerances and tie rules. Select GPA reference settings. Require parsed CSV schemas, units and round-trip checks, plus valid PDF content and explicit edge-case messages.",
+      "acceptance_check": "Every test has deterministic assertions. Incorrect units, swapped specimen labels, lost calibration, duplicate landmarks and invalid-but-nonempty downloads fail.",
+      "supersedes": ""
+    },
+    {
+      "id": "F12",
+      "severity": "minor",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_app_rewrite_spec.md:54-55; bifaceAnalysis/app.R:1088-1104",
+      "claim": "Analysis fails with fewer than three specimens unconditionally.",
+      "problem": "One specimen and k greater than n fail. The isolated two-specimen PCA/clustering path succeeds with k=2, although only one PC has nonzero rank. Default k=3 explains the demonstrated two-specimen runtime failure.",
+      "evidence": "small_n.log records hclust failure at n=1, cutree failure at n=2,k=3, and successful clustering at n=2,k=2 with PC2 scores approximately 1e-17.",
+      "repair": "Describe missing n/k guards, failure under the default cluster count and rank-deficient additional PCs separately.",
+      "acceptance_check": "The defect description matches n=1 and n=2 tests at k=2 and k=3, without claiming that the complete interactive observer was exercised.",
+      "supersedes": ""
+    }
+  ],
+  "held": [
+    "Read all scoped files and images in full. HEAD matches the requested commit, and git diff HEAD found no scoped changes. The project CLAUDE.md is absent.",
+    "D1 is confirmed by installed Momocs 1.4.1 source: coefficient columns are A1..AH, B1..BH, C1..CH, D1..DH.",
+    "D2-D6 are supported by the code. Qualifications: D4 has a successful return but no bounded failure termination; D5 blade clicks are displayed and checked for completeness but do not construct regions.",
+    "D7-D10 are supported. D12 lacks anatomical tip anchoring. D14 duplicates plotting in the roughly 288-line PDF handler and promises CSV/RDS exports absent from app.R.",
+    "D13's archive date is confirmed by [CRAN](https://cran.r-project.org/web/packages/Momocs/index.html). Archived source remains obtainable. The stated imager version and publication date match [CRAN metadata](https://cran.r-project.org/web/packages/imager/index.html).",
+    "The EFA coefficient equations and harmonic power formula are correct. Independent coefficients agree with Momocs within 3.47e-18. GPA coordinates are valid EFA inputs; first-ellipse normalization is unnecessary when scale, rotation, traversal and phase are consistently fixed.",
+    "The farthest-midline-intersection rule resolves ordinary multiple crossings geometrically. Under forced-light diagnostic segmentation, every demo has one base-side crossing, a unique projection maximum and axial length greater than width. None exercises exact 45 degrees or wider-than-long behavior. Photographs do not establish whether a blunt-looking apex is broken.",
+    "The geometric-correspondence limitation is accurate. It does not establish anatomical homology or adequacy of 100 points per edge. Pooling edges does not eliminate variation caused by arbitrary photographed faces.",
+    "RV(X,X)=1 was reproduced. Independent 4-by-40 and 4-by-80 Gaussian blocks gave RV 0.928931628088 and permutation mean 0.937697931834, illustrating small-sample inflation. Common-fit-induced covariance is also a valid limitation, documented in the [official MorphoJ guide](https://morphometrics.uk/MorphoJ_guide/covariation/pls_intraconfig.htm).",
+    "Descriptive permutation references are permitted by the shared conventions. No Bayesian replacement or covariance-ratio implementation is required. All promised runtime features remain implementable with custom base-R routines and the stated packages."
+  ],
+  "not_examined": [
+    "The nonexistent rewrite, browser behavior, deployment, actual downloads and rsconnect dependency scan were not run. shinytest2 is unavailable. Existing-app checks were static and numerical, not a complete interactive run.",
+    "Original Kuhl and Giardina (1982) and Escoufier (1973) PDFs were not obtained. Equations were checked independently and against installed Momocs 1.4.1. The Adams paper was not fully audited.",
+    "The external Momocs source URL returned Cache miss; installed 1.4.1 supplied its function bodies. PMC returned reCAPTCHA for Klingenberg (2009); relevant publisher HTML and official documentation were available.",
+    "The command-line script, root outputs, deployed identity at f8eeed2, historical audits and resolution ledgers were outside the brief's reading scope. The README script path was not independently checked for existence.",
+    "No anatomical-correspondence validation, point-count sensitivity study or Bayesian feasibility benchmark was performed. Segmentation instantiated unspecified implementation details explicitly and tested a prototype.",
+    "A final Python here-document checking finding IDs and evidence-path existence was sandbox-blocked: zsh could not create its temporary file, reporting operation not permitted. It was not rerun through another mechanism. Earlier JSON syntax validation passed. R's OpenMP temporary-file warning did not prevent calculations."
+  ],
+  "questions": [
+    "Should ambiguous or broken tips require manual landmarks, or remain geometric extremes with a warning?",
+    "Which cross-sectional width and location should be reported for tied widths or notched outlines?",
+    "Should symmetrization affect analysis only, preserving raw measurements and saved outlines?",
+    "Must CSV reload restore the complete specimen store, including calibration and processing settings?",
+    "Should the RV reference remain conditional re-pairing of fixed coordinates, or represent independence with superimposition included?"
+  ],
+  "evidence_files": [
+    "codex/audits/2026-11-17_spec_report.md",
+    "codex/evidence/2026-11-17_spec/checks.R",
+    "codex/evidence/2026-11-17_spec/checks.log",
+    "codex/evidence/2026-11-17_spec/small_n.R",
+    "codex/evidence/2026-11-17_spec/small_n.log",
+    "codex/evidence/2026-11-17_spec/sources.txt",
+    "codex/evidence/2026-11-17_spec/make_report.py",
+    "codex/evidence/2026-11-17_spec/audit.json",
+    "codex/evidence/2026-11-17_spec/data/segmentation1.png",
+    "codex/evidence/2026-11-17_spec/data/segmentation2.png",
+    "codex/evidence/2026-11-17_spec/data/segmentation3.png",
+    "codex/evidence/2026-11-17_spec/data/segmentation4.png"
+  ],
+  "run": {
+    "stem": "2026-11-17_spec",
+    "mode": "spec",
+    "review": "",
+    "commit": "a85cb88d0e3f966e553b23e0be5958612b7a38e7",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "codex_version": "codex-cli 0.169.0",
+    "session_id": "01a1eb09-bcf0-7ee0-8a0f-1d5bacd77627",
+    "started": "2026-11-17T14:44:06-05:00",
+    "finished": "2026-11-17T14:54:57-05:00"
+  }
+}

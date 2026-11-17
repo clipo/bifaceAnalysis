@@ -1,0 +1,26 @@
+External checks, 2026-11-17
+
+https://cran.r-project.org/web/packages/Momocs/index.html
+CRAN states that Momocs was archived on 2026-03-18. Archived source versions remain available.
+The audit independently inspected installed Momocs 1.4.1 function bodies, recorded in checks.log.
+An attempt to open https://raw.githubusercontent.com/cran/Momocs/1.4.1/R/efourier.R through the web tool returned Cache miss. Installed 1.4.1 resolved the source check.
+
+https://cran.r-project.org/web/packages/imager/index.html
+Version 1.0.8; published 2025-12-23; compiled system requirements include fftw3, libtiff and X11.
+
+https://cran.r-project.org/web/packages/cluster/refman/cluster.html
+silhouette is supplied by cluster, not the four direct runtime dependencies in the design or base R.
+All proposed runtime behavior remains implementable using custom base-R code; this is an implementation obligation, not an impossibility.
+
+https://onlinelibrary.wiley.com/doi/10.1111/j.1525-142X.2009.00347.x
+Klingenberg (2009), HTML sections 'The RV coefficient' and 'Permutation test of covariation'.
+RV uses squared cross-covariances normalized by within-block covariance magnitudes.
+For simultaneous Procrustes fits, the article distinguishes permutations with a new joint fit from permutations of frozen coordinates. The former preserve the alignment contribution in a reference for independence of parts.
+
+https://morphometrics.uk/MorphoJ_guide/covariation/pls_intraconfig.htm
+Official guide, Background and Text output. Joint fitting induces interdependence. The permutation procedure includes a new fit. RV is analogous to squared correlation, and joint-fit results include relative sizes and arrangement of parts.
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC2776930/
+The web tool returned a browser/reCAPTCHA page. The publisher HTML above supplied the relevant sections.
+
+Limits: original Kuhl and Giardina (1982) and Escoufier (1973) PDFs were not obtained. No verbatim quotations from those papers are attributed. Coefficient equations were checked by independent computation and installed Momocs 1.4.1. No CR covariance-ratio implementation was tested, because it is explicitly excluded from the rewrite.

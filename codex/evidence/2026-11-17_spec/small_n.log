@@ -1,0 +1,50 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+
+Attaching package: ‘Momocs’
+
+The following object is masked from ‘package:stats’:
+
+    filter
+
+n= 1 k= 2 
+[1] "must have n >= 2 objects to cluster"
+n= 1 k= 3 
+[1] "must have n >= 2 objects to cluster"
+n= 2 k= 2 
+$scores
+[1] 2 2
+
+$PC2
+        shp1         shp2 
+9.678308e-18 1.053007e-17 
+
+$clusters
+shp1 shp2 
+   1    2 
+
+n= 2 k= 3 
+[1] "elements of 'k' must be between 1 and 2"
+n= 3 k= 2 
+$scores
+[1] 3 3
+
+$PC2
+         shp1          shp2          shp3 
+ 0.0001447094 -0.0002935488  0.0001488394 
+
+$clusters
+shp1 shp2 shp3 
+   1    2    2 
+
+n= 3 k= 3 
+$scores
+[1] 3 3
+
+$PC2
+         shp1          shp2          shp3 
+ 0.0001447094 -0.0002935488  0.0001488394 
+
+$clusters
+shp1 shp2 shp3 
+   1    2    3 
+

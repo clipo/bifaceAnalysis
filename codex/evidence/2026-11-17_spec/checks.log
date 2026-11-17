@@ -1,0 +1,347 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+Loading required package: magrittr
+
+Attaching package: ‘imager’
+
+The following object is masked from ‘package:magrittr’:
+
+    add
+
+The following objects are masked from ‘package:stats’:
+
+    convolve, spectrum
+
+The following object is masked from ‘package:graphics’:
+
+    frame
+
+The following object is masked from ‘package:base’:
+
+    save.image
+
+AUDIT environment
+ R version 4.6.2 (2026-10-29) 
+Momocs 1.4.1 
+imager 1.0.8 
+shiny 1.14.0 
+bslib 0.12.0 
+ggplot2 4.0.3 
+cluster 2.1.8.3 
+testthat 3.3.2 
+HEAD a85cb88d0e3f966e553b23e0be5958612b7a38e7 
+
+Installed Momocs 1.4.1 source bodies
+function (x, nb.h, smooth.it = 0, ...) 
+{
+    coo <- x
+    coo <- coo_check(coo)
+    if (coo_is_closed(coo)) 
+        coo <- coo_unclose(coo)
+    nr <- nrow(coo)
+    if (missing(nb.h)) {
+        nb.h <- 12
+        message("'nb.h' not provided and set to ", nb.h)
+    }
+    if (nb.h * 2 > nr) {
+        nb.h = floor(nr/2)
+        if (.is_verbose()) {
+            message("'nb.h' must be lower than half the number of points, and has been set to ", 
+                nb.h, "harmonics")
+        }
+    }
+    if (nb.h == -1) {
+        nb.h = floor(nr/2)
+        if (.is_verbose()) {
+            message("the number of harmonics used has been set to: ", 
+                nb.h)
+        }
+    }
+    if (smooth.it != 0) {
+        coo <- coo_smooth(coo, smooth.it)
+    }
+    Dx <- coo[, 1] - coo[, 1][c(nr, (1:(nr - 1)))]
+    Dy <- coo[, 2] - coo[, 2][c(nr, (1:(nr - 1)))]
+    Dt <- sqrt(Dx^2 + Dy^2)
+    Dt[Dt < 1e-10] <- 1e-10
+    t1 <- cumsum(Dt)
+    t1m1 <- c(0, t1[-nr])
+    T <- sum(Dt)
+    an <- bn <- cn <- dn <- numeric(nb.h)
+    for (i in 1:nb.h) {
+        Ti <- (T/(2 * pi^2 * i^2))
+        r <- 2 * i * pi
+        an[i] <- Ti * sum((Dx/Dt) * (cos(r * t1/T) - cos(r * 
+            t1m1/T)))
+        bn[i] <- Ti * sum((Dx/Dt) * (sin(r * t1/T) - sin(r * 
+            t1m1/T)))
+        cn[i] <- Ti * sum((Dy/Dt) * (cos(r * t1/T) - cos(r * 
+            t1m1/T)))
+        dn[i] <- Ti * sum((Dy/Dt) * (sin(r * t1/T) - sin(r * 
+            t1m1/T)))
+    }
+    ao <- 2 * sum(coo[, 1] * Dt/T)
+    co <- 2 * sum(coo[, 2] * Dt/T)
+    return(list(an = an, bn = bn, cn = cn, dn = dn, ao = ao, 
+        co = co))
+}
+<bytecode: 0x76dab1ba80>
+<environment: namespace:Momocs>
+function (x, nb.h, smooth.it = 0, norm = TRUE, start = FALSE, 
+    ...) 
+{
+    if (norm && missing(norm)) 
+        message("'norm=TRUE' is used and this may be troublesome. See ?efourier #Details")
+    Out <- x
+    Out %<>% verify()
+    q <- floor(min(coo_nb(Out)/2)) - 1
+    if (missing(nb.h)) {
+        nb.h <- calibrate_harmonicpower_efourier(Out, thresh = 99, 
+            plot = FALSE)$minh
+        if (.is_verbose()) 
+            message("'nb.h' set to ", nb.h, " (99% harmonic power)")
+    }
+    if (nb.h > q) {
+        nb.h <- q
+        message("at least one outline has >", q * 2, " coordinates. 'nb.h' set to ", 
+            q)
+    }
+    coo <- Out$coo
+    col.n <- paste0(rep(LETTERS[1:4], each = nb.h), rep(1:nb.h, 
+        times = 4))
+    coe <- matrix(ncol = 4 * nb.h, nrow = length(coo), dimnames = list(names(coo), 
+        col.n))
+    for (i in seq(along = coo)) {
+        ef <- efourier(coo[[i]], nb.h = nb.h, smooth.it = smooth.it)
+        if (norm) {
+            ef <- efourier_norm(ef, start = start)
+            if (ef$A[1] < 0) {
+                ef$A <- (-ef$A)
+                ef$B <- (-ef$B)
+                ef$C <- (-ef$C)
+                ef$D <- (-ef$D)
+                ef$lnef <- (-ef$lnef)
+            }
+            coe[i, ] <- c(ef$A, ef$B, ef$C, ef$D)
+        }
+        else {
+            coe[i, ] <- c(ef$an, ef$bn, ef$cn, ef$dn)
+        }
+    }
+    coe[abs(coe) < 1e-12] <- 0
+    res <- OutCoe(coe = coe, fac = Out$fac, method = "efourier", 
+        norm = norm)
+    res$cuts <- ncol(res$coe)
+    return(res)
+}
+<bytecode: 0x76dab269e0>
+<environment: namespace:Momocs>
+function (coo) 
+{
+    coo <- coo_check(coo)
+    return(coo %*% svd(var(coo))$u)
+}
+<bytecode: 0x76dab33690>
+<environment: namespace:Momocs>
+
+ELLIPSE coefficients and amplitudes
+                     a                 b                  c                  d
+[1,] 2.62452137993e+00 3.87631413445e-03 -1.62358087449e-03  1.09927177452e+00
+[2,] 8.72788753675e-17 1.89691588162e-15 -1.22970063295e-15 -9.37352050531e-16
+[3,] 2.41790947734e-01 1.07135319332e-03 -5.73183892607e-04  1.29360399058e-01
+[4,] 7.02592526457e-17 1.04118825348e-15 -2.99134129403e-16 -3.25786545560e-16
+[5,] 7.10217139951e-02 5.24490446906e-04 -3.15930277369e-04  4.27803974964e-02
+          first_x           first_y    largest_higher  max_Momocs_error 
+2.62452424251e+00 1.09927297350e+00 2.41790947734e-01 3.46944695195e-18 
+first five powers
+[1] 4.04826428490e+00 2.99834998867e-30 3.75992257941e-02 6.42313721207e-31 3.43731058546e-03
+
+Centered triangle Fourier DC
+[1] 0.0274850704906 0.0393039712659
+
+Endpoint-inclusive resampling rows/distinct
+[1] 200 198
+
+PCA eigenvalue/order counterexample
+[1] 0.680066666667 0.666666666667
+[1] 1.000000000000 0.340033333333
+PC1 PC2 
+  0   0 
+Subspace principal-angle cosines
+[1] 1 1
+Three specimens leave-one-out centered ranks
+[1] 2 1
+
+RV checks identical/independent observed/permutation mean/range
+     identical       observed           mean           2.5%          97.5% 
+1.000000000000 0.928931628088 0.937697931834 0.900716863552 0.990035741167 
+
+SEGMENTATION assumptions: grayscale Luma; first Otsu maximum; disk radius 2; 4-connectivity; default whole image.
+IMAGE 1 border light fraction 0.525119617225 light border pixels 439 of 836 
+
+IMAGE artifact1.jpg dimensions 244 176 threshold 0.34765625 background above? TRUE 
+top component areas 37485 hole pixels filled 14089 
+retained area fraction 0.872880961252 border touches TRUE contours 2 closed FALSE FALSE vertices 410 4 
+Forced-light diagnostic: component areas 14836 5252 contours 1 border FALSE 
+$area
+[1] 14835.5
+
+$ratio
+[1] 5.45762584711
+
+$angle
+[1] 176.480977163
+
+$extent_ratio
+[1] 2.19711803625
+
+$tip_ties
+[1] 1
+
+$base_intersections
+[1] 1
+
+$all_intersections
+[1] -94.1995618979 127.2179263972
+
+IMAGE 2 border light fraction 0.520742358079 light border pixels 477 of 916 
+
+IMAGE artifact2.jpg dimensions 278 182 threshold 0.41796875 background above? TRUE 
+top component areas 45140 hole pixels filled 13755 
+retained area fraction 0.892165388568 border touches TRUE contours 2 closed FALSE FALSE vertices 446 4 
+Forced-light diagnostic: component areas 15095 5219 contours 1 border FALSE 
+$area
+[1] 15094.5
+
+$ratio
+[1] 8.15069631739
+
+$angle
+[1] 177.113003411
+
+$extent_ratio
+[1] 2.61580446263
+
+$tip_ties
+[1] 1
+
+$base_intersections
+[1] 1
+
+$all_intersections
+[1] -109.343260948  141.207795099
+
+IMAGE 3 border light fraction 0.310846560847 light border pixels 235 of 756 
+
+IMAGE artifact3.jpg dimensions 194 186 threshold 0.375 background above? FALSE 
+top component areas 10374 4076 hole pixels filled 1119 
+retained area fraction 0.287495843033 border touches FALSE contours 1 closed TRUE vertices 725 
+$area
+[1] 10373.5
+
+$ratio
+[1] 2.78218000218
+
+$angle
+[1] 176.308216297
+
+$extent_ratio
+[1] 1.53308801939
+
+$tip_ties
+[1] 1
+
+$base_intersections
+[1] 1
+
+$all_intersections
+[1] -73.8854855602  96.8009434808
+
+Forced-light diagnostic: component areas 10374 4076 contours 1 border FALSE 
+$area
+[1] 10373.5
+
+$ratio
+[1] 2.78218000218
+
+$angle
+[1] 176.308216297
+
+$extent_ratio
+[1] 1.53308801939
+
+$tip_ties
+[1] 1
+
+$base_intersections
+[1] 1
+
+$all_intersections
+[1] -73.8854855602  96.8009434808
+
+IMAGE 4 border light fraction 0.539735099338 light border pixels 326 of 604 
+
+IMAGE artifact4.jpg dimensions 134 170 threshold 0.44140625 background above? TRUE 
+top component areas 19340 hole pixels filled 5585 
+retained area fraction 0.848990342406 border touches TRUE contours 2 closed FALSE FALSE vertices 289 4 
+Forced-light diagnostic: component areas 5920 3271 contours 1 border FALSE 
+$area
+[1] 5919.5
+
+$ratio
+[1] 2.74029876743
+
+$angle
+[1] -175.890026821
+
+$extent_ratio
+[1] 1.48652344348
+
+$tip_ties
+[1] 1
+
+$base_intersections
+[1] 1
+
+$all_intersections
+[1] -50.5003057780  62.7910430198
+
+Warning messages:
+1: In grayscale(img) : Image appears to already be in grayscale mode
+2: In grayscale(img) : Image appears to already be in grayscale mode
+3: In grayscale(img) : Image appears to already be in grayscale mode
+4: In grayscale(img) : Image appears to already be in grayscale mode
+
+Dependency checks
+silhouette : character(0)
+hclust : [1] "package:stats"
+prcomp : [1] "package:stats"
+silhouette supplied by cluster: TRUE 
+
+Complete loaded-package versions
+R version 4.6.2 (2026-10-29)
+Platform: aarch64-apple-darwin27.0.0
+Running under: macOS Golden Gate 27.3
+
+Matrix products: default
+BLAS:   /opt/homebrew/Cellar/openblas/0.3.34/lib/libopenblasp-r0.3.34.dylib 
+LAPACK: /opt/homebrew/Cellar/r/4.6.2/lib/R/lib/libRlapack.dylib;  LAPACK version 3.12.1
+
+locale:
+[1] C.UTF-8/C.UTF-8/C.UTF-8/C/C.UTF-8/C.UTF-8
+
+time zone: America/New_York
+tzcode source: internal
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] imager_1.0.8   magrittr_2.0.5
+
+loaded via a namespace (and not attached):
+ [1] vctrs_0.7.3        cli_3.6.6          rlang_1.3.0        stringi_1.8.9      tiff_0.1-12        purrr_1.2.2        png_0.1-9         
+ [8] generics_0.1.4     readbitmap_0.1.5   S7_0.2.2           Momocs_1.4.1       glue_1.8.1         scales_1.4.0       grid_4.6.2        
+[15] tibble_3.3.1       lifecycle_1.0.5    stringr_1.6.0      cluster_2.1.8.3    compiler_4.6.2     bmp_0.3.1          dplyr_1.2.1       
+[22] igraph_2.3.4       RColorBrewer_1.1-3 Rcpp_1.1.2         pkgconfig_2.0.3    farver_2.1.2       R6_2.6.1           tidyselect_1.2.1  
+[29] pillar_1.11.1      tools_4.6.2        jpeg_0.1-11        gtable_0.3.6       ggplot2_4.0.3     
+Script finished
