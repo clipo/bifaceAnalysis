@@ -1,0 +1,22 @@
+# Scratch produced by audit runs. Reports, prompts, findings, scripts, and logs are tracked.
+# Re-include the auditor's scripts and logs that a repository-wide pattern (for example *.log or *.R) would hide.
+!*.log
+!*.txt
+!*.md
+!*.json
+!*.py
+!*.R
+!*.r
+!*.sh
+!*.jl
+# Scratch directories: data extracts and copies, temp, caches.
+evidence/*/data/
+evidence/*/tmp/
+evidence/*/cache/
+.cache/
+.tmp/
+__pycache__/
+.pytest_cache/
+.keras/
+.mpl/
+*.pyc
