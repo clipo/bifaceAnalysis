@@ -1,5 +1,12 @@
 # Biface Shape Analysis (Momocs Pipeline)
 
+> **Note (2026-11-17).** The Shiny app in `bifaceAnalysis/` has been rewritten
+> and no longer uses Momocs. See `bifaceAnalysis/README.md` for the current
+> app. The text below describes the earlier version. The command-line script
+> `biface_analysis.R` and the output files in this folder belong to that
+> earlier pipeline, share defects D1, D2, and D12 documented in
+> `docs/specs/2026-11-17_app_rewrite_spec.md`, and have not been corrected.
+
 This project provides tools for morphometric analysis of biface or artifact outlines using the **Momocs** package in R.
 
 There are two versions:

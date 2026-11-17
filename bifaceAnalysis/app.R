@@ -1,2238 +1,742 @@
+# Biface outline analysis: a Shiny app for teaching outline-based morphometrics.
+# Analysis code is in R/ (sourced automatically by Shiny). This file holds the
+# interface and the reactive wiring only.
+# Specification: docs/specs/2026-11-17_app_rewrite_spec.md.
+
 library(shiny)
-library(Momocs)
-library(imager)
-library(dplyr)
+library(bslib)
 library(ggplot2)
 
-# This function safely extracts x, y coordinates from contours
-safe_extract_contour <- function(contour) {
-  tryCatch({
-    df <- as.data.frame(contour)
-    coords <- matrix(c(df$x, df$y), ncol = 2)
-    colnames(coords) <- c("x", "y")
-    return(coords)
-  }, error = function(e) {
-    return(NULL)
-  })
+options(shiny.maxRequestSize = 40 * 1024^2)
+
+MAX_HARMONICS <- 30L
+DEMO_DIR <- "www"
+DEMO_DIRECTION <- "left"
+IMAGE_PATTERN <- "(?i)\\.(jpe?g|png)$"
+
+how_to_read <- function(id) {
+  card(card_header("How to read this"), card_body(uiOutput(id), class = "small"))
 }
 
-# Custom mshape function to calculate the mean shape from a list of coordinates
-custom_mshape <- function(coo_list) {
-  # Check if input is a Momocs Out object
-  if (inherits(coo_list, "Out")) {
-    coo_list <- coo_list$coo
-  }
-  
-  # Get number of coordinates and dimensions
-  n_shapes <- length(coo_list)
-  if (n_shapes == 0) return(NULL)
-  
-  n_points <- nrow(coo_list[[1]])
-  n_dims <- ncol(coo_list[[1]])
-  
-  # Initialize mean shape matrix
-  mean_shape <- matrix(0, nrow = n_points, ncol = n_dims)
-  
-  # Sum all shapes
-  for (i in 1:n_shapes) {
-    mean_shape <- mean_shape + coo_list[[i]]
-  }
-  
-  # Divide by number of shapes to get mean
-  mean_shape <- mean_shape / n_shapes
-  
-  return(mean_shape)
+paragraphs <- function(x) tagList(lapply(x[nzchar(x)], tags$p))
+
+result_row <- function(plot_id, text_id, height = "440px") {
+  layout_columns(col_widths = c(8, 4),
+                 card(card_body(plotOutput(plot_id, height = height))),
+                 how_to_read(text_id))
 }
 
-# Calculate discrete curvature along outline points
-calculate_curvature <- function(outline) {
-  n_points <- nrow(outline)
-  curvature <- numeric(n_points)
-  
-  for (i in 1:n_points) {
-    prev_idx <- ifelse(i == 1, n_points, i - 1)
-    next_idx <- ifelse(i == n_points, 1, i + 1)
-    
-    # Vector approach to curvature estimation
-    v1 <- outline[i,] - outline[prev_idx,]
-    v2 <- outline[next_idx,] - outline[i,]
-    
-    # Compute angle between vectors (normalized dot product)
-    dot_prod <- sum(v1 * v2) / (sqrt(sum(v1^2)) * sqrt(sum(v2^2)))
-    # Clamp to handle floating point issues
-    dot_prod <- min(max(dot_prod, -1), 1)
-    curvature[i] <- acos(dot_prod)
-  }
-  
-  return(curvature)
-}
+ui <- page_navbar(
+  title = "Biface outline analysis",
+  id = "nav",
+  theme = bs_theme(version = 5, primary = "#0072B2"),
+  header = tags$head(tags$style(HTML(
+    ".small p { margin-bottom: 0.6rem; }
+     .warn-box { border-left: 4px solid #D55E00; padding: 0.4rem 0.8rem; background: #FFF4EC; margin-bottom: 0.5rem; }"))),
 
-# Smooth curvature values to reduce noise
-smooth_curvature <- function(curvature, window_size = 5) {
-  n_points <- length(curvature)
-  smoothed <- numeric(n_points)
-  
-  half_window <- floor(window_size / 2)
-  
-  for (i in 1:n_points) {
-    # Calculate indices within the window (with wrap-around)
-    indices <- ((i - half_window):(i + half_window)) %% n_points
-    indices[indices == 0] <- n_points
-    
-    # Calculate mean for the window
-    smoothed[i] <- mean(curvature[indices])
-  }
-  
-  return(smoothed)
-}
-
-# Identify significant inflection points
-find_inflection_points <- function(curvature, outline, threshold_factor = 1.5) {
-  # Determine adaptive threshold based on curvature distribution
-  curvature_threshold <- mean(curvature) + threshold_factor * sd(curvature)
-  
-  # Find local maxima exceeding threshold
-  n_points <- length(curvature)
-  inflection_indices <- c()
-  
-  for (i in 2:(n_points-1)) {
-    if (curvature[i] > curvature[i-1] && 
-        curvature[i] > curvature[i+1] && 
-        curvature[i] > curvature_threshold) {
-      inflection_indices <- c(inflection_indices, i)
-    }
-  }
-  
-  # If too few points found, reduce threshold and try again
-  if (length(inflection_indices) < 3) {
-    return(find_inflection_points(curvature, outline, threshold_factor * 0.8))
-  }
-  
-  return(inflection_indices)
-}
-
-# Classify inflection points and define regions
-define_regions <- function(outline, inflection_indices, curvature) {
-  n_points <- nrow(outline)
-  
-  # Find centroid of outline for directional reference
-  centroid <- colMeans(outline)
-  
-  # Calculate distance from each point to centroid
-  distances <- sqrt(rowSums((outline - matrix(rep(centroid, n_points), ncol=2, byrow=TRUE))^2))
-  
-  # Find the tip as the point furthest from centroid with high curvature
-  potential_tips <- inflection_indices[curvature[inflection_indices] > quantile(curvature, 0.9)]
-  if (length(potential_tips) > 0) {
-    tip_idx <- potential_tips[which.max(distances[potential_tips])]
-  } else {
-    # Fallback to farthest point if no high curvature points found
-    tip_idx <- which.max(distances)
-  }
-  
-  # Compute angles relative to centroid
-  angles <- atan2(outline[,2] - centroid[2], outline[,1] - centroid[1])
-  
-  # Create ordered sequence of indices starting from tip
-  tip_to_end <- c(tip_idx:n_points)
-  start_to_tip <- c(1:(tip_idx-1))
-  ordered_indices <- c(tip_idx, tip_to_end[-1], start_to_tip)  # Remove tip from tip_to_end to avoid duplication
-  
-  # Calculate tangent angles around the outline
-  tangent_angles <- numeric(n_points)
-  for (i in 1:n_points) {
-    prev_idx <- ifelse(i == 1, n_points, i - 1)
-    next_idx <- ifelse(i == n_points, 1, i + 1)
-    
-    tangent_x <- outline[next_idx, 1] - outline[prev_idx, 1]
-    tangent_y <- outline[next_idx, 2] - outline[prev_idx, 2]
-    tangent_angles[i] <- atan2(tangent_y, tangent_x)
-  }
-  
-  # Calculate angle changes (first derivative of tangent angle)
-  angle_changes <- numeric(n_points)
-  for (i in 1:n_points) {
-    next_idx <- ifelse(i == n_points, 1, i + 1)
-    change <- tangent_angles[next_idx] - tangent_angles[i]
-    # Normalize to -pi to pi
-    angle_changes[i] <- ((change + pi) %% (2*pi)) - pi
-  }
-  
-  # Find left and right sides of outline relative to tip
-  # We need to identify which direction is clockwise from the tip
-  next_to_tip <- (tip_idx %% n_points) + 1
-  if (next_to_tip == 1) next_to_tip <- n_points
-  
-  # Calculate vectors from centroid to tip and from tip to next point
-  v1 <- outline[tip_idx,] - centroid
-  v2 <- outline[next_to_tip,] - outline[tip_idx,]
-  
-  # Cross product to determine orientation
-  cross_prod <- v1[1]*v2[2] - v1[2]*v2[1]
-  
-  # Based on cross product, determine left and right sides
-  if (cross_prod > 0) {
-    # Clockwise traversal from tip
-    right_indices <- seq(from = tip_idx, to = tip_idx + floor(n_points/2) - 1, by = 1) %% n_points
-    left_indices <- seq(from = tip_idx - 1, to = tip_idx - floor(n_points/2), by = -1) %% n_points
-  } else {
-    # Counter-clockwise traversal from tip
-    left_indices <- seq(from = tip_idx, to = tip_idx + floor(n_points/2) - 1, by = 1) %% n_points
-    right_indices <- seq(from = tip_idx - 1, to = tip_idx - floor(n_points/2), by = -1) %% n_points
-  }
-  
-  # Correct for 0 indices
-  right_indices[right_indices == 0] <- n_points
-  left_indices[left_indices == 0] <- n_points
-  
-  # Find shoulder points using curvature and position
-  # We look for high curvature points along the sides
-  right_side_curvature <- curvature[right_indices]
-  left_side_curvature <- curvature[left_indices]
-  
-  # Calculate distance along outline from tip
-  outline_distance <- numeric(length(right_indices))
-  for (i in 2:length(right_indices)) {
-    prev_point <- outline[right_indices[i-1],]
-    curr_point <- outline[right_indices[i],]
-    outline_distance[i] <- outline_distance[i-1] + sqrt(sum((curr_point - prev_point)^2))
-  }
-  
-  # Normalize distance to proportion of total
-  max_dist <- max(outline_distance)
-  normalized_dist <- outline_distance / max_dist
-  
-  # We expect shoulders to be in the last third of the side
-  potential_right_shoulders <- right_indices[normalized_dist > 0.6 & normalized_dist < 0.9]
-  
-  # If sufficient potential shoulder points found, use curvature to select best one
-  if (length(potential_right_shoulders) > 0) {
-    right_shoulder <- potential_right_shoulders[which.max(curvature[potential_right_shoulders])]
-  } else {
-    # Fallback to position-based approach - roughly 2/3 down the side
-    shoulder_idx <- ceiling(length(right_indices) * 0.7)
-    right_shoulder <- right_indices[shoulder_idx]
-  }
-  
-  # Repeat for left side
-  outline_distance <- numeric(length(left_indices))
-  for (i in 2:length(left_indices)) {
-    prev_point <- outline[left_indices[i-1],]
-    curr_point <- outline[left_indices[i],]
-    outline_distance[i] <- outline_distance[i-1] + sqrt(sum((curr_point - prev_point)^2))
-  }
-  
-  max_dist <- max(outline_distance)
-  normalized_dist <- outline_distance / max_dist
-  
-  potential_left_shoulders <- left_indices[normalized_dist > 0.6 & normalized_dist < 0.9]
-  
-  if (length(potential_left_shoulders) > 0) {
-    left_shoulder <- potential_left_shoulders[which.max(curvature[potential_left_shoulders])]
-  } else {
-    shoulder_idx <- ceiling(length(left_indices) * 0.7)
-    left_shoulder <- left_indices[shoulder_idx]
-  }
-  
-  # Base is approximately opposite from tip
-  base_candidates <- c()
-  if (length(right_indices) > 0 && length(left_indices) > 0) {
-    last_right <- right_indices[length(right_indices)]
-    last_left <- left_indices[length(left_indices)]
-    
-    # Find points between last_right and last_left
-    if (last_right < last_left) {
-      base_candidates <- (last_right:last_left)
-    } else {
-      base_candidates <- c(last_right:n_points, 1:last_left)
-    }
-  }
-  
-  if (length(base_candidates) > 0) {
-    # Base is point furthest from tip
-    tip_coords <- outline[tip_idx,]
-    distances_from_tip <- numeric(length(base_candidates))
-    
-    for (i in 1:length(base_candidates)) {
-      base_point <- outline[base_candidates[i],]
-      distances_from_tip[i] <- sqrt(sum((base_point - tip_coords)^2))
-    }
-    
-    base_idx <- base_candidates[which.max(distances_from_tip)]
-  } else {
-    # Fallback to point opposite tip
-    opposite_angle <- (angles[tip_idx] + pi) %% (2*pi)
-    angle_diff <- abs(angles - opposite_angle)
-    base_idx <- which.min(angle_diff)
-  }
-  
-  # Define region boundaries
-  # Determine tip region size based on tip angle
-  tip_angle <- curvature[tip_idx]
-  tip_region_size <- max(3, round(15 * (1 - tip_angle/pi)))  # Sharper tips get smaller regions
-  
-  # Tip region centered on tip
-  tip_region <- ((tip_idx - tip_region_size):(tip_idx + tip_region_size)) %% n_points
-  tip_region[tip_region == 0] <- n_points
-  
-  # Right blade: between tip and right shoulder
-  if (right_shoulder > tip_idx) {
-    right_blade <- (tip_idx + tip_region_size + 1):(right_shoulder - 1)
-  } else {
-    right_blade <- c((tip_idx + tip_region_size + 1):n_points, 1:(right_shoulder - 1))
-  }
-  right_blade <- right_blade[right_blade > 0 & right_blade <= n_points]
-  
-  # Left blade: between tip and left shoulder
-  if (left_shoulder > tip_idx) {
-    left_blade <- (tip_idx + tip_region_size + 1):(left_shoulder - 1)
-  } else {
-    left_blade <- c((tip_idx + tip_region_size + 1):n_points, 1:(left_shoulder - 1))
-  }
-  left_blade <- left_blade[left_blade > 0 & left_blade <= n_points]
-  
-  # Combine left and right blade regions
-  blade_region <- unique(c(right_blade, left_blade))
-  
-  # Shoulder regions: around shoulder points
-  right_shoulder_region <- ((right_shoulder - 2):(right_shoulder + 2)) %% n_points
-  right_shoulder_region[right_shoulder_region == 0] <- n_points
-  
-  left_shoulder_region <- ((left_shoulder - 2):(left_shoulder + 2)) %% n_points
-  left_shoulder_region[left_shoulder_region == 0] <- n_points
-  
-  shoulder_region <- unique(c(right_shoulder_region, left_shoulder_region))
-  
-  # Base region: between shoulders, centered on base point
-  base_region_size <- floor(n_points/10)  # Approximately 10% of points
-  base_region <- ((base_idx - base_region_size):(base_idx + base_region_size)) %% n_points
-  base_region[base_region == 0] <- n_points
-  
-  # Ensure regions don't overlap and all points are assigned
-  all_assigned <- c(tip_region, blade_region, shoulder_region, base_region)
-  remaining <- setdiff(1:n_points, all_assigned)
-  
-  # Assign remaining points to nearest region
-  if (length(remaining) > 0) {
-    for (pt in remaining) {
-      # Calculate distance to nearest point in each region
-      tip_dist <- min(sqrt(rowSums((outline[pt,] - outline[tip_region,])^2)))
-      blade_dist <- min(sqrt(rowSums((outline[pt,] - outline[blade_region,])^2)))
-      shoulder_dist <- min(sqrt(rowSums((outline[pt,] - outline[shoulder_region,])^2)))
-      base_dist <- min(sqrt(rowSums((outline[pt,] - outline[base_region,])^2)))
-      
-      min_dist <- min(tip_dist, blade_dist, shoulder_dist, base_dist)
-      
-      if (min_dist == tip_dist) {
-        tip_region <- c(tip_region, pt)
-      } else if (min_dist == blade_dist) {
-        blade_region <- c(blade_region, pt)
-      } else if (min_dist == shoulder_dist) {
-        shoulder_region <- c(shoulder_region, pt)
-      } else {
-        base_region <- c(base_region, pt)
-      }
-    }
-  }
-  
-  # Return all regions and key points
-  return(list(
-    tip = tip_region,
-    blade = blade_region,
-    shoulder = shoulder_region,
-    base = base_region,
-    key_points = list(
-      tip = tip_idx,
-      left_shoulder = left_shoulder,
-      right_shoulder = right_shoulder,
-      base = base_idx
-    ),
-    curvature = curvature
-  ))
-}
-
-ui <- fluidPage(
-  titlePanel("Projectile Point Shape Analysis"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      radioButtons("image_source", "Image source:", 
-                   choices = c("Demo Images", "Upload My Own"), 
-                   selected = "Demo Images"),
-      
-      conditionalPanel(
-        condition = "input.image_source == 'Upload My Own'",
-        fileInput("images", "Upload JPEG Images", 
-                  accept = c(".jpg", ".jpeg"), 
-                  multiple = TRUE)
-      ),
-      
-      h4("Image Processing"),
-      radioButtons("artifact_mode", "Artifact appearance:", 
-                   choices = c("Darker than background" = "darker", 
-                               "Lighter than background" = "lighter"),
-                   selected = "darker"),
-      
-      sliderInput("threshold", "Threshold (0–1)", 
-                  min = 0, max = 1, value = 0.5, step = 0.01),
-      
-      sliderInput("noise_size", "Noise removal", 
-                  min = 0, max = 20, value = 5, step = 1),
-      
-      h4("Analysis Settings"),
-      sliderInput("nbh", "Harmonics", 
-                  min = 1, max = 50, value = 20),
-      
-      numericInput("k_clusters", "Clusters", 
-                   value = 3, min = 1),
-      
-      # Add orientation control
-      h4("Projectile Point Orientation"),
-      selectInput("orientation", "Tip direction:",
-                  choices = c("Up" = "up", 
-                              "Down" = "down", 
-                              "Left" = "left", 
-                              "Right" = "right"),
-                  selected = "up"),
-      
-      # Region definition method selection
-      h4("Region Detection Method"),
-      radioButtons("region_method", "Method:", 
-                   choices = c("Geometric (Shape-based)" = "geometric",
-                               "Proportional (Percentage-based)" = "proportional",
-                               "Manual key points" = "manual"),
-                   selected = "geometric"),
-      
-      # Show region proportions only when using proportional method
-      conditionalPanel(
-        condition = "input.region_method == 'proportional'",
-        # Add region proportion controls with added shoulder
-        sliderInput("tip_ratio", "Tip proportion (%):", 
-                    min = 10, max = 40, value = 20, step = 5),
-        
-        sliderInput("blade_ratio", "Blade proportion (%):", 
-                    min = 20, max = 60, value = 40, step = 5),
-        
-        sliderInput("shoulder_ratio", "Shoulder proportion (%):", 
-                    min = 10, max = 30, value = 15, step = 5),
-        
-        sliderInput("base_ratio", "Base proportion (%):", 
-                    min = 10, max = 40, value = 20, step = 5),
-      ),
-      
-      # Show geometric detection parameters when using geometric method
-      conditionalPanel(
-        condition = "input.region_method == 'geometric'",
-        sliderInput("curvature_threshold", "Curvature sensitivity:", 
-                    min = 0.5, max = 2.5, value = 1.5, step = 0.1),
-        
-        sliderInput("curvature_smoothing", "Curvature smoothing:", 
-                    min = 1, max = 11, value = 5, step = 2)
-      ),
-      
-      conditionalPanel(
-        condition = "input.region_method == 'manual'",
-        # Display when manual mode is selected
-        h4("Manual Key Points Selection"),
-        p("Select key points on the outline after processing:"),
-        
-        actionButton("select_tip", "Select Tip", class = "btn-danger"),
-        actionButton("select_blade_left", "Left Blade Junction", class = "btn-success"),
-        actionButton("select_blade_right", "Right Blade Junction", class = "btn-success"),
-        actionButton("select_shoulder_left", "Left Shoulder Junction", class = "btn-info"),
-        actionButton("select_shoulder_right", "Right Shoulder Junction", class = "btn-info"),
-        actionButton("select_base", "Select Base", class = "btn-primary"),
-        
-        actionButton("reset_points", "Reset Points", class = "btn-warning"),
-        
-        verbatimTextOutput("key_points_info")
-      ),
-      
-      
-      actionButton("crop_btn", "Process Image", 
-                   class = "btn-primary"),
-      
-      actionButton("next_img", "Next Image", 
-                   class = "btn-info"),
-      
-      actionButton("reset_img", "Reset", 
-                   class = "btn-warning"),
-      
-      actionButton("run_analysis", "Run Analysis", 
-                   class = "btn-success"),
-      
-      hr(),
-      
-      h4("Downloads"),
-      downloadButton("download_pdf", "Download Graphics (PDF)", 
-                     class = "btn-danger"),
-      
-      hr(),
-      
-      div(style = "text-align: center; margin-top: 10px;",
-          tags$p("Source code and documentation:"),
-          tags$a(
-            href = "https://github.com/clipo/bifaceAnalysis",
-            target = "_blank",  # Opens in new tab
-            div(
-              style = "display: inline-flex; align-items: center; color: #333; text-decoration: none; border: 1px solid #ddd; border-radius: 5px; padding: 5px 10px; background: #f8f8f8;",
-              tags$img(src = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", 
-                       height = "20px",
-                       style = "margin-right: 5px;"),
-              "GitHub Repository"
-            )
-          )
-      )
-    ),
-    
-    mainPanel(
-      h4(textOutput("current_image_name")),
-      
-      # Use a div with position:relative to contain the plot and markers
-      div(
-        id = "image-container",
-        style = "position: relative;",
-        plotOutput("image_plot", click = "img_click", height = "300px"),
-        uiOutput("click_markers")
-      ),
-      
-      tabsetPanel(
-        id = "main_tabs",
-        tabPanel("Processing", 
-                 fluidRow(
-                   column(6, plotOutput("cropped_plot", height = "250px")),
-                   column(6, plotOutput("binary_plot", height = "250px"))
-                 ),
-                 plotOutput("outline_plot", height = "250px", click="outline_click"),
-                 verbatimTextOutput("processing_info")
+  nav_panel(
+    "1. Images", value = "images",
+    layout_columns(
+      col_widths = c(6, 6),
+      card(
+        card_header("Start here"),
+        p("This app measures and compares the outline shapes of bifaces and projectile points from photographs. Work through the numbered steps at the top of the page."),
+        tags$ol(
+          tags$li("Choose images on this page."),
+          tags$li("Check the outline the app finds for each image and save it."),
+          tags$li("Review the saved specimens and label them."),
+          tags$li("Read the results. Each result has a note on how to read it.")
         ),
-        tabPanel("Results", 
-                 tabsetPanel(
-                   tabPanel("Outlines Grid", plotOutput("grid_plot", height = "500px")),
-                   tabPanel("Stacked Outlines", plotOutput("stack_plot", height = "500px")),
-                   tabPanel("EFA Harmonic Power", plotOutput("harmonic_plot", height = "500px")),
-                   tabPanel("PCA Morphospace", plotOutput("morpho_plot", height = "500px")),
-                   tabPanel("Thin-Plate Splines", plotOutput("tps_plot", height = "500px")),
-                   tabPanel("Integration/Modularity", plotOutput("modularity_plot", height = "500px"))
-                 )
-        )
+        p("To see what the results look like before using your own images, run the demonstration."),
+        actionButton("run_demo", "Run the demonstration with four sample points", class = "btn-primary"),
+        hr(),
+        radioButtons("image_source", "Images to work on",
+                     choices = c("Sample images" = "demo", "My own images" = "upload"), selected = "demo"),
+        conditionalPanel(
+          "input.image_source == 'upload'",
+          fileInput("images", "Upload JPEG or PNG images", accept = c(".jpg", ".jpeg", ".png"), multiple = TRUE)
+        ),
+        textOutput("image_count"),
+        actionButton("go_outline", "Continue to step 2", class = "btn-outline-primary")
+      ),
+      card(
+        card_header("Photographs that work well"),
+        tags$ul(
+          tags$li("One artifact per image, lying flat, photographed from directly above."),
+          tags$li("A plain background that contrasts with the artifact: dark cloth for light stone, white paper for dark stone."),
+          tags$li("Background visible on every side of the artifact. Nothing else should touch it."),
+          tags$li("Even lighting without hard shadows. A shadow that touches the artifact becomes part of its outline."),
+          tags$li("A scale bar in the frame, not touching the artifact, if you want measurements in millimetres."),
+          tags$li("All artifacts pointing the same way saves time, because you state the tip direction once.")
+        ),
+        p(class = "text-muted", "Uploaded images are used only during your session and are not stored.")
       )
     )
-  )
+  ),
+
+  nav_panel(
+    "2. Outline", value = "outline",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 340,
+        strong(textOutput("image_title")),
+        div(actionButton("prev_img", "Previous"), actionButton("next_img", "Next")),
+        radioButtons("mode", "Clicking on the image will",
+                     choices = c("Crop: drag a box around the artifact" = "crop",
+                                 "Set scale: click the two ends of a known distance" = "scale",
+                                 "Set tip and base: click the tip, then the base" = "landmarks"),
+                     selected = "crop"),
+        selectInput("direction", "The tip points",
+                    choices = c("Left" = "left", "Right" = "right", "Up" = "up", "Down" = "down"),
+                    selected = DEMO_DIRECTION),
+        accordion(
+          open = FALSE,
+          accordion_panel(
+            "Detection settings",
+            checkboxInput("auto_threshold", "Choose the threshold automatically", TRUE),
+            conditionalPanel("!input.auto_threshold",
+                             sliderInput("threshold", "Threshold", min = 0.02, max = 0.98, value = 0.5, step = 0.01)),
+            selectInput("polarity", "The artifact is",
+                        choices = c("Detected automatically" = "auto", "Lighter than the background" = "light",
+                                    "Darker than the background" = "dark")),
+            sliderInput("speck", "Remove specks narrower than (pixels)", min = 0, max = 10, value = 3, step = 1),
+            actionButton("clear_crop", "Clear crop", class = "btn-sm"),
+            actionButton("clear_landmarks", "Use automatic tip and base", class = "btn-sm")
+          ),
+          accordion_panel(
+            "Scale",
+            numericInput("scale_mm", "Distance between the two clicked points (mm)", value = 10, min = 0.1),
+            checkboxInput("scale_all", "Use this scale for images that have none of their own", FALSE),
+            actionButton("clear_scale", "Clear scale", class = "btn-sm"),
+            textOutput("scale_text")
+          )
+        ),
+        textInput("spec_name", "Specimen name"),
+        textInput("spec_group", "Group label (optional, for example a type or site)"),
+        actionButton("save_spec", "Save outline and go to next image", class = "btn-primary"),
+        textOutput("saved_text")
+      ),
+      uiOutput("outline_warnings"),
+      layout_columns(
+        col_widths = c(8, 4),
+        card(card_header("Image with detected outline"),
+             plotOutput("image_plot", height = "480px", click = "img_click",
+                        brush = brushOpts("img_brush", resetOnNew = TRUE))),
+        card(card_header("Standardized outline"),
+             plotOutput("std_plot", height = "380px"),
+             p(class = "small text-muted", "The outline turned tip up. Crosses mark the tip and base. Colours show the four regions used in step 4."))
+      )
+    )
+  ),
+
+  nav_panel(
+    "3. Specimens", value = "specimens",
+    layout_columns(
+      col_widths = c(8, 4),
+      card(card_header("Saved specimens"),
+           plotOutput("spec_grid", height = "360px"),
+           tableOutput("spec_table")),
+      card(
+        card_header("Edit"),
+        selectInput("edit_which", "Specimen", choices = character(0)),
+        textInput("edit_name", "Name"),
+        textInput("edit_group", "Group label"),
+        div(actionButton("edit_apply", "Apply changes", class = "btn-primary btn-sm"),
+            actionButton("edit_remove", "Remove this specimen", class = "btn-outline-danger btn-sm")),
+        hr(),
+        p("Sessions on the server end after a period without activity. Download your outlines to keep them, and load the file later to continue."),
+        downloadButton("dl_outlines", "Download outlines (CSV)", class = "btn-sm"),
+        fileInput("load_outlines", "Load a saved outline file", accept = ".csv"),
+        actionButton("go_results", "Continue to step 4", class = "btn-outline-primary")
+      )
+    )
+  ),
+
+  nav_panel(
+    "4. Results", value = "results",
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 300,
+        textOutput("n_text"),
+        selectInput("colour_by", "Colour specimens by",
+                    choices = c("Group label" = "group", "Cluster" = "cluster", "Nothing" = "none")),
+        checkboxInput("symmetrize", "Analyse symmetric shapes (average each outline with its mirror image)", FALSE),
+        checkboxInput("auto_harmonics", "Choose the number of harmonics automatically", TRUE),
+        conditionalPanel("!input.auto_harmonics",
+                         sliderInput("n_harmonics", "Harmonics", min = 2, max = MAX_HARMONICS, value = 12, step = 1)),
+        numericInput("k", "Number of clusters", value = 2, min = 2, step = 1),
+        accordion(open = FALSE, accordion_panel(
+          "Region boundaries",
+          p(class = "small", "Position along each edge, as a percentage of the distance from tip to base."),
+          sliderInput("b_tip", "Tip ends at", min = 5, max = 95, value = 15, step = 5, post = "%"),
+          sliderInput("b_blade", "Blade ends at", min = 5, max = 95, value = 60, step = 5, post = "%"),
+          sliderInput("b_shoulder", "Shoulder ends at", min = 5, max = 95, value = 80, step = 5, post = "%")
+        )),
+        hr(),
+        downloadButton("dl_report", "Report (PDF)", class = "btn-primary btn-sm"),
+        downloadButton("dl_meas", "Measurements (CSV)", class = "btn-sm"),
+        downloadButton("dl_scores", "PC scores (CSV)", class = "btn-sm"),
+        downloadButton("dl_coef", "Fourier coefficients (CSV)", class = "btn-sm")
+      ),
+      navset_card_tab(
+        id = "results_tabs",
+        nav_panel("Outlines", result_row("stack_plot", "outlines_text")),
+        nav_panel("Measurements", result_row("meas_plot", "meas_text", "360px"), card(tableOutput("meas_table"))),
+        nav_panel("Harmonics", result_row("power_plot", "harm_text", "340px"),
+                  card(selectInput("recon_which", "Specimen to rebuild", choices = character(0)),
+                       plotOutput("recon_plot", height = "240px"))),
+        nav_panel("PCA", result_row("morpho_plot", "pca_text"),
+                  layout_columns(col_widths = c(4, 8), card(plotOutput("scree_plot", height = "280px")),
+                                 result_row("stab_plot", "stab_text", "280px"))),
+        nav_panel("Shape change", result_row("pcs_plot", "pcs_text")),
+        nav_panel("Clusters", result_row("dend_plot", "clust_text"),
+                  layout_columns(col_widths = c(6, 6), card(plotOutput("sil_plot", height = "260px")),
+                                 card(card_header("Clusters against group labels"), tableOutput("cross_table")))),
+        nav_panel("Regions",
+                  layout_columns(col_widths = c(4, 4, 4),
+                                 card(plotOutput("regions_plot", height = "320px")),
+                                 card(plotOutput("pvar_plot", height = "320px")),
+                                 card(plotOutput("rvar_plot", height = "320px"))),
+                  result_row("rv_plot", "regions_text", "340px"))
+      )
+    )
+  ),
+
+  nav_panel(
+    "Help", value = "help",
+    card(
+      card_header("What the app does"),
+      tags$dl(
+        tags$dt("Finding the outline"),
+        tags$dd("The image is converted to grey levels and divided into light and dark at a threshold chosen by Otsu's method, which picks the level that best separates the two. The artifact is taken to be the largest light or dark region that does not touch the edge of the image or crop. Holes inside it, such as inked catalogue numbers, are filled. Images larger than 1200 pixels on their longer side are reduced to that size."),
+        tags$dt("Orientation, tip, and base"),
+        tags$dd("You state which way the tip points. The app computes the outline's axis of elongation nearest that direction and turns the outline so the axis is vertical with the tip up. The tip is the outline point farthest along the axis. The base is the point where the midline (the line through the centre of area, parallel to the axis) meets the far end of the outline. You can set both by clicking if the automatic choice is wrong."),
+        tags$dt("Corresponding points"),
+        tags$dd("The tip and base divide the outline into two edges. Each edge is represented by 100 points spaced evenly along its length. Point 30 on an edge is 30 percent of the way from tip to base on every specimen. This allows specimens to be compared point by point, but an equal fraction of edge length does not always fall on the same feature of different artifacts."),
+        tags$dt("Alignment"),
+        tags$dd("Generalized Procrustes alignment centres every outline, scales it to the same size, and rotates it to best fit the mean of all outlines. After this step outlines differ only in shape."),
+        tags$dt("Elliptical Fourier analysis and principal components"),
+        tags$dd("Each aligned outline is described by Fourier coefficients. Principal component analysis of those coefficients finds the main ways in which the outlines differ. Because orientation, size, and the starting point are already fixed by the steps above, the coefficients are used as computed, without further normalization."),
+        tags$dt("Clusters"),
+        tags$dd("Ward's hierarchical clustering groups specimens by the distances between their coefficient sets."),
+        tags$dt("Regions"),
+        tags$dd("Each edge is divided into tip, blade, shoulder, and base by position along its length. The app reports how variable each region is and how strongly pairs of regions vary together.")
+      ),
+      h6("Limits to keep in mind"),
+      tags$ul(
+        tags$li("The outline records the plan shape only. Thickness, cross-section, flaking, and raw material are not measured."),
+        tags$li("Breaks and resharpening change outlines. The analysis cannot tell these apart from differences in the original form."),
+        tags$li("Which face was photographed determines left and right. Use the symmetric option if this matters for your question."),
+        tags$li("Results from a few specimens can change substantially when one specimen is added or removed. The PCA tab shows how much."),
+        tags$li("A camera stores an orientation flag that some programs apply and others ignore, so a photograph can appear turned here. Set the tip direction to match what you see on the page.")
+      )
+    )
+  ),
+  nav_spacer(),
+  nav_item(tags$a("Source code", href = "https://github.com/clipo/bifaceAnalysis", target = "_blank"))
 )
 
 server <- function(input, output, session) {
-  # Reactive values
-  img_index <- reactiveVal(1)
-  click_points <- reactiveVal(data.frame(x = numeric(0), y = numeric(0)))
-  outlines_list <- reactiveVal(list())
-  names_list <- reactiveVal(c())
-  cropped_img <- reactiveVal(NULL)
-  binary_img <- reactiveVal(NULL)
-  outline_shape <- reactiveVal(NULL)
-  processing_log <- reactiveVal("")
-  
-  # Reactive values for analysis
-  outlines_r <- reactiveVal()
-  efa_result_r <- reactiveVal()
-  pca_result_r <- reactiveVal()
-  tps_grid_r <- reactiveVal()
-  modularity_r <- reactiveVal()
-  curvature_r <- reactiveVal()
-  
-  # Additional reactive values for manual key points
-  key_points_mode <- reactiveVal(FALSE)
-  current_key_point <- reactiveVal(NULL)
-  key_points <- reactiveVal(list(
-    tip = NULL,
-    blade_left = NULL,
-    blade_right = NULL,
-    shoulder_left = NULL,
-    shoulder_right = NULL,
-    base = NULL
-  ))
-  
-  # Get image files
-  get_files <- reactive({
-    if (input$image_source == "Demo Images") {
-      files <- list.files("www", pattern = "(?i)\\.jpe?g$", full.names = TRUE)
-      if (length(files) == 0) {
-        processing_log("No demo images found in the 'www' folder.")
-        return(list(files = character(0), names = character(0)))
-      }
-      names <- basename(files)
-    } else {
-      req(input$images)
-      files <- input$images$datapath
-      names <- input$images$name
-    }
-    list(files = files, names = names)
-  })
-  
-  # Track clicks for cropping
-  observeEvent(input$img_click, {
-    clicks <- click_points()
-    if (nrow(clicks) < 2) {
-      click_points(rbind(clicks, data.frame(x = input$img_click$x, y = input$img_click$y)))
-    }
-  })
-  
-  # Reset
-  observeEvent(input$reset_img, {
-    click_points(data.frame(x = numeric(0), y = numeric(0)))
-    cropped_img(NULL)
-    binary_img(NULL)
-    outline_shape(NULL)
-    processing_log("")
-  })
-  
-  # Add click markers on the image
-  output$click_markers <- renderUI({
-    clicks <- click_points()
-    if (nrow(clicks) == 0) return(NULL)
-    
-    # Create markers for each click point
-    markers <- lapply(1:nrow(clicks), function(i) {
-      tags$div(
-        style = sprintf(
-          "position: absolute; left: %.0fpx; top: %.0fpx; width: 10px; height: 10px; 
-           background-color: red; border-radius: 50%%; z-index: 1000;",
-          clicks$x[i], clicks$y[i]
-        )
-      )
-    })
-    
-    markers
-  })
-  
-  # Create observer for region method selection
-  observeEvent(input$region_method, {
-    if(input$region_method == "manual") {
-      # Display message in log
-      current_log <- processing_log()
-      processing_log(paste(current_log, 
-                           "\nManual region selection mode activated. Process an image and then select key points.",
-                           sep=""))
-    } else {
-      # Disable key point selection mode
-      key_points_mode(FALSE)
-    }
-  })
-  
-  # Observers for key point selection buttons
-  observeEvent(input$select_tip, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("tip")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the TIP point.", sep=""))
-  })
-  
-  observeEvent(input$select_blade_left, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("blade_left")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the LEFT BLADE junction point.", sep=""))
-  })
-  
-  observeEvent(input$select_blade_right, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("blade_right")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the RIGHT BLADE junction point.", sep=""))
-  })
-  
-  # New observers for shoulder points
-  observeEvent(input$select_shoulder_left, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("shoulder_left")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the LEFT SHOULDER junction point.", sep=""))
-  })
-  
-  observeEvent(input$select_shoulder_right, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("shoulder_right")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the RIGHT SHOULDER junction point.", sep=""))
-  })
-  
-  observeEvent(input$select_base, {
-    if(is.null(outline_shape())) {
-      processing_log(paste(processing_log(), "\nProcess an image first before selecting points.", sep=""))
-      return()
-    }
-    key_points_mode(TRUE)
-    current_key_point("base")
-    processing_log(paste(processing_log(), "\nClick on the outline to select the BASE point.", sep=""))
-  })
-  
-  observeEvent(input$reset_points, {
-    key_points(list(
-      tip = NULL,
-      blade_left = NULL,
-      blade_right = NULL,
-      shoulder_left = NULL,
-      shoulder_right = NULL,
-      base = NULL
-    ))
-    processing_log(paste(processing_log(), "\nKey points reset.", sep=""))
-  })
-  
-  # Process image
-  observeEvent(input$crop_btn, {
-    files <- get_files()$files
-    names <- get_files()$names
-    idx <- img_index()
-    
-    if (length(files) == 0 || idx > length(files)) {
-      processing_log("No images available")
-      return()
-    }
-    
-    if (nrow(click_points()) != 2) {
-      processing_log("Click two points to crop")
-      return()
-    }
-    
-    log_text <- paste("Processing:", names[idx], "\n")
-    
-    tryCatch({
-      # Load image
-      img <- load.image(files[idx])
-      img_gray <- suppressWarnings(grayscale(img))
-      
-      # Crop image
-      cp <- click_points()
-      x1 <- round(min(cp$x)); x2 <- round(max(cp$x))
-      y1 <- round(min(cp$y)); y2 <- round(max(cp$y))
-      
-      # Validate crop dimensions
-      if (x1 >= x2 || y1 >= y2 || 
-          x1 < 0 || y1 < 0 || 
-          x2 > dim(img_gray)[1] || y2 > dim(img_gray)[2]) {
-        processing_log(paste(log_text, "Invalid crop region"))
-        return()
-      }
-      
-      # Apply crop
-      crop <- imsub(img_gray, x %inr% c(x1, x2), y %inr% c(y1, y2))
-      cropped_img(crop)
-      
-      # Apply threshold based on artifact appearance
-      if (input$artifact_mode == "darker") {
-        bin <- crop < input$threshold
-      } else {
-        bin <- crop > input$threshold
-      }
-      
-      # Clean up noise
-      if (input$noise_size > 0) {
-        bin <- clean(bin, input$noise_size)
-      }
-      
-      binary_img(bin)
-      
-      # Extract contours
-      contours <- tryCatch({
-        imager::contours(bin, nlevels = 1)
-      }, error = function(e) {
-        log_text <<- paste0(log_text, "ERROR extracting contours: ", e$message, "\n")
-        processing_log(log_text)
-        return(NULL)
-      })
-      
-      if (is.null(contours) || length(contours) == 0) {
-        log_text <- paste0(log_text, "No contours found\n")
-        processing_log(log_text)
-        return()
-      }
-      
-      # Select the largest contour
-      selected_contour <- NULL
-      max_points <- 0
-      
-      for (i in 1:length(contours)) {
-        # Use our safe extraction function
-        current_contour <- safe_extract_contour(contours[[i]])
-        
-        if (!is.null(current_contour) && nrow(current_contour) > max_points) {
-          max_points <- nrow(current_contour)
-          selected_contour <- current_contour
-        }
-      }
-      
-      if (is.null(selected_contour) || nrow(selected_contour) < 50) {
-        log_text <- paste0(log_text, "Contour has too few points\n")
-        processing_log(log_text)
-        return()
-      }
-      
-      log_text <- paste0(log_text, "Found contour with ", nrow(selected_contour), " points\n")
-      
-      # Interpolate
-      interp <- coo_interpolate(selected_contour, n = 100)
-      outline_shape(interp)
-      
-      # Calculate curvature for geometric detection
-      if (input$region_method == "geometric") {
-        curv <- calculate_curvature(interp)
-        # Apply smoothing based on user parameter
-        window_size <- ceiling(input$curvature_smoothing / 2) * 2 + 1  # Ensure odd number
-        smoothed_curv <- smooth_curvature(curv, window_size)
-        curvature_r(smoothed_curv)
-        
-        log_text <- paste0(log_text, "Calculated curvature for geometric region detection\n")
-      }
-      
-      # Add to outlines list
-      out_list <- outlines_list()
-      name_list <- names_list()
-      out_list[[length(out_list) + 1]] <- interp
-      name_list <- c(name_list, tools::file_path_sans_ext(names[idx]))
-      outlines_list(out_list)
-      names_list(name_list)
-      
-      log_text <- paste0(log_text, "Successfully added outline\n")
-      processing_log(log_text)
-      
-    }, error = function(e) {
-      log_text <<- paste0(log_text, "CRITICAL ERROR: ", e$message, "\n")
-      processing_log(log_text)
-    })
-  })
-  
-  # Next image
-  observeEvent(input$next_img, {
-    files <- get_files()$files
-    next_idx <- img_index() + 1
-    
-    if (next_idx <= length(files)) {
-      click_points(data.frame(x = numeric(0), y = numeric(0)))
-      cropped_img(NULL)
-      binary_img(NULL)
-      outline_shape(NULL)
-      processing_log("")
-      img_index(next_idx)
-    } else {
-      processing_log("No more images")
-    }
-  })
-  
-  # Display current image name
-  output$current_image_name <- renderText({
-    files <- get_files()$files
-    names <- get_files()$names
-    idx <- img_index()
-    
-    if (length(files) == 0) {
-      return("No images available")
-    }
-    
-    if (idx <= length(names)) {
-      paste0("Image ", idx, "/", length(names), ": ", names[idx], 
-             " (Click two points to crop)")
-    } else {
-      "All images processed. Run analysis below."
-    }
-  })
-  
-  # Display original image
-  output$image_plot <- renderPlot({
-    files <- get_files()$files
-    idx <- img_index()
-    
-    if (length(files) == 0 || idx > length(files)) {
-      plot(c(0, 1), c(0, 1), type = "n", xlab = "", ylab = "", 
-           main = "No images available", axes = FALSE)
-      text(0.5, 0.5, "Add images to 'www' or upload your own")
-      return()
-    }
-    
-    tryCatch({
-      img <- load.image(files[idx])
-      plot(img, main = "Click two points to crop")
-      
-      # Draw crop rectangle
-      cp <- click_points()
-      if (nrow(cp) == 2) {
-        rect(min(cp$x), min(cp$y), max(cp$x), max(cp$y), border = "red", lwd = 2)
-      }
-    }, error = function(e) {
-      plot(c(0, 1), c(0, 1), type = "n", xlab = "", ylab = "", 
-           main = "Error loading image", axes = FALSE)
-      text(0.5, 0.5, paste("Error:", e$message))
-    })
-  })
-  
-  # Display cropped image
-  output$cropped_plot <- renderPlot({
-    if (is.null(cropped_img())) {
-      plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, 
-           main = "Cropped Image", xlab = "", ylab = "")
-      text(0.5, 0.5, "Process an image to see preview")
-      return()
-    }
-    
-    plot(cropped_img(), main = "Cropped Image")
-  })
-  
-  # Display binary image
-  output$binary_plot <- renderPlot({
-    if (is.null(binary_img())) {
-      plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, 
-           main = "Binary Image", xlab = "", ylab = "")
-      text(0.5, 0.5, "Process an image to see binary result")
-      return()
-    }
-    
-    plot(binary_img(), main = paste0("Binary (Threshold = ", input$threshold, ")"))
-  })
-  
-  # Display outline with interactive key point selection
-  output$outline_plot <- renderPlot({
-    if(is.null(outline_shape())) {
-      plot(c(0, 1), c(0, 1), type = "n", axes = FALSE, 
-           main = "Outline", xlab = "", ylab = "")
-      text(0.5, 0.5, "Process an image to see extracted outline")
-      return()
-    }
-    
-    # Plot outline
-    plot(outline_shape(), type = "l", asp = 1, main = "Extracted Outline")
-    
-    # If using geometric method and curvature has been calculated, show it
-    if(input$region_method == "geometric" && !is.null(curvature_r())) {
-      # Add curvature visualization as color along the outline
-      curv <- curvature_r()
-      # Normalize curvature to 0-1 scale for coloring
-      norm_curv <- (curv - min(curv)) / (max(curv) - min(curv))
-      
-      # Plot points with color based on curvature
-      for(i in 1:nrow(outline_shape())) {
-        # Higher curvature = more red
-        col_val <- rgb(norm_curv[i], 0, 1-norm_curv[i])
-        points(outline_shape()[i, 1], outline_shape()[i, 2], 
-               col = col_val, pch = 19, cex = 1)
-      }
-      
-      # Add a legend for curvature
-      gradient_colors <- sapply(seq(0, 1, length.out = 10), function(x) {
-        rgb(x, 0, 1-x)
-      })
-      
-      # Draw legend in the corner
-      legend_x <- min(outline_shape()[,1]) + 0.1 * (max(outline_shape()[,1]) - min(outline_shape()[,1]))
-      legend_y <- min(outline_shape()[,2]) + 0.1 * (max(outline_shape()[,2]) - min(outline_shape()[,2]))
-      
-      # Small rectangle for the legend
-      rect(legend_x, legend_y, 
-           legend_x + 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1])), 
-           legend_y + 0.05 * (max(outline_shape()[,2]) - min(outline_shape()[,2])),
-           col = "white", border = "black")
-      
-      # Add colored points for the gradient
-      for(i in 1:length(gradient_colors)) {
-        x_pos <- legend_x + (i-1)/9 * 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1]))
-        points(x_pos, legend_y + 0.025 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
-               col = gradient_colors[i], pch = 19, cex = 1.5)
-      }
-      
-      # Add labels
-      text(legend_x, legend_y + 0.07 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
-           "Curvature", pos = 4, cex = 0.8)
-      text(legend_x, legend_y - 0.02 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
-           "Low", pos = 4, cex = 0.7)
-      text(legend_x + 0.2 * (max(outline_shape()[,1]) - min(outline_shape()[,1])), 
-           legend_y - 0.02 * (max(outline_shape()[,2]) - min(outline_shape()[,2])), 
-           "High", pos = 2, cex = 0.7)
-    }
-    
-    # Show key points if any exist
-    kp <- key_points()
-    if(!is.null(kp$tip)) {
-      points(outline_shape()[kp$tip, 1], outline_shape()[kp$tip, 2], 
-             col = "red", pch = 19, cex = 2)
-      text(outline_shape()[kp$tip, 1], outline_shape()[kp$tip, 2], 
-           "TIP", col = "red", pos = 1)
-    }
-    if(!is.null(kp$blade_left)) {
-      points(outline_shape()[kp$blade_left, 1], outline_shape()[kp$blade_left, 2], 
-             col = "green", pch = 19, cex = 2)
-      text(outline_shape()[kp$blade_left, 1], outline_shape()[kp$blade_left, 2], 
-           "BL", col = "green", pos = 2)
-    }
-    if(!is.null(kp$blade_right)) {
-      points(outline_shape()[kp$blade_right, 1], outline_shape()[kp$blade_right, 2], 
-             col = "green", pch = 19, cex = 2)
-      text(outline_shape()[kp$blade_right, 1], outline_shape()[kp$blade_right, 2], 
-           "BR", col = "green", pos = 4)
-    }
-    if(!is.null(kp$shoulder_left)) {
-      points(outline_shape()[kp$shoulder_left, 1], outline_shape()[kp$shoulder_left, 2], 
-             col = "purple", pch = 19, cex = 2)
-      text(outline_shape()[kp$shoulder_left, 1], outline_shape()[kp$shoulder_left, 2], 
-           "SL", col = "purple", pos = 2)
-    }
-    if(!is.null(kp$shoulder_right)) {
-      points(outline_shape()[kp$shoulder_right, 1], outline_shape()[kp$shoulder_right, 2], 
-             col = "purple", pch = 19, cex = 2)
-      text(outline_shape()[kp$shoulder_right, 1], outline_shape()[kp$shoulder_right, 2], 
-           "SR", col = "purple", pos = 4)
-    }
-    if(!is.null(kp$base)) {
-      points(outline_shape()[kp$base, 1], outline_shape()[kp$base, 2], 
-             col = "blue", pch = 19, cex = 2)
-      text(outline_shape()[kp$base, 1], outline_shape()[kp$base, 2], 
-           "BASE", col = "blue", pos = 3)
-    }
-  })
-  
-  # Handle clicks on the outline plot
-  observeEvent(input$outline_click, {
-    # Only process clicks if in key point selection mode
-    if(!key_points_mode() || is.null(current_key_point()) || is.null(outline_shape())) {
-      return()
-    }
-    
-    # Find the closest point on the outline to the click
-    click_x <- input$outline_click$x
-    click_y <- input$outline_click$y
-    
-    outline <- outline_shape()
-    distances <- sqrt((outline[,1] - click_x)^2 + (outline[,2] - click_y)^2)
-    closest_point <- which.min(distances)
-    
-    # Update the key points with the new selection
-    current_kp <- key_points()
-    current_kp[[current_key_point()]] <- closest_point
-    key_points(current_kp)
-    
-    # Update log
-    processing_log(paste(processing_log(), 
-                         "\nSelected point ", closest_point, " as ", 
-                         toupper(current_key_point()), ".",
-                         sep=""))
-    
-    # Turn off selection mode
-    key_points_mode(FALSE)
-  })
-  
-  # Display key points info
-  output$key_points_info <- renderText({
-    kp <- key_points()
-    if(is.null(kp$tip) && is.null(kp$blade_left) && 
-       is.null(kp$blade_right) && is.null(kp$shoulder_left) &&
-       is.null(kp$shoulder_right) && is.null(kp$base)) {
-      return("No points selected yet.")
-    }
-    
-    paste("Selected points:\n",
-          "Tip: ", if(is.null(kp$tip)) "Not set" else paste("Point", kp$tip), "\n",
-          "Left Blade Junction: ", if(is.null(kp$blade_left)) "Not set" else paste("Point", kp$blade_left), "\n",
-          "Right Blade Junction: ", if(is.null(kp$blade_right)) "Not set" else paste("Point", kp$blade_right), "\n",
-          "Left Shoulder Junction: ", if(is.null(kp$shoulder_left)) "Not set" else paste("Point", kp$shoulder_left), "\n",
-          "Right Shoulder Junction: ", if(is.null(kp$shoulder_right)) "Not set" else paste("Point", kp$shoulder_right), "\n",
-          "Base: ", if(is.null(kp$base)) "Not set" else paste("Point", kp$base))
-  })
-  
-  # Display processing log
-  output$processing_info <- renderText({
-    processing_log()
-  })
-  
-  # Run analysis
-  observeEvent(input$run_analysis, {
-    out_list <- outlines_list()
-    name_list <- names_list()
-    
-    current_log <- processing_log()
-    processing_log(paste(current_log, "\nStarting analysis...", sep=""))
-    
-    if (length(out_list) == 0) {
-      processing_log(paste(current_log, "\nNo outlines to analyze. Process images first.", sep=""))
-      return()
-    }
-    
-    tryCatch({
-      # Create Momocs Out object
-      outlines <- Out(out_list)
-      names(outlines$coo) <- name_list
-      
-      # Align outlines
-      outlines <- outlines %>% 
-        coo_center() %>% 
-        coo_scale() %>% 
-        coo_align()
-      
-      outlines_r(outlines)
-      
-      # Elliptical Fourier Analysis
-      efa <- efourier(outlines, nb.h = input$nbh, norm = TRUE)
-      efa_result_r(efa)
-      
-      # PCA
-      pca <- PCA(efa)
-      
-      # Clustering
-      clust <- hclust(dist(efa$coe), method = "ward.D2")
-      k <- input$k_clusters
-      clusters <- cutree(clust, k = k)
-      pca$fac <- data.frame(cluster = factor(clusters))
-      
-      pca_result_r(pca)
-      
-      # Calculate mean shape for TPS grid
-      mean_shape <- custom_mshape(outlines$coo)
-      
-      # For TPS visualization, use actual specimen shapes at the extremes of the PCA
-      pc1_scores <- pca$x[,1]
-      pc2_scores <- pca$x[,2]
-      
-      # Find specimens at extremes of PC axes
-      pc1_pos_idx <- which.max(pc1_scores)
-      pc1_neg_idx <- which.min(pc1_scores)
-      pc2_pos_idx <- which.max(pc2_scores)
-      pc2_neg_idx <- which.min(pc2_scores)
-      
-      # Store shapes at PCA extremes
-      tps_grid_r(list(
-        mean = mean_shape,
-        pc1_pos = outlines$coo[[pc1_pos_idx]],
-        pc1_neg = outlines$coo[[pc1_neg_idx]],
-        pc2_pos = outlines$coo[[pc2_pos_idx]],
-        pc2_neg = outlines$coo[[pc2_neg_idx]]
-      ))
-      
-      # Estimate modularity by dividing outline into regions
-      n_points <- nrow(mean_shape)
-      
-      # Determine region indices based on method
-      if (input$region_method == "manual") {
-        # Use manually selected key points if available
-        kp <- key_points()
-        
-        # Check if all necessary points are selected
-        if (is.null(kp$tip) || is.null(kp$blade_left) || 
-            is.null(kp$blade_right) || is.null(kp$shoulder_left) ||
-            is.null(kp$shoulder_right) || is.null(kp$base)) {
-          processing_log(paste(current_log, 
-                               "\nError: Not all key points are selected for manual region definition.", 
-                               sep=""))
-          return()
-        }
-        
-        # Define regions based on selected points
-        # Calculate clockwise distance between points
-        clockwise_dist <- function(start, end, total) {
-          if(start <= end) {
-            return(end - start)
-          } else {
-            return(total - start + end)
-          }
-        }
-        
-        # Tip region: centered around tip point
-        tip_size <- round(n_points * (20/100))  # Use default 20% for tip
-        half_tip <- floor(tip_size / 2)
-        tip_start <- (kp$tip - half_tip) %% n_points
-        if(tip_start == 0) tip_start <- n_points
-        tip_end <- (kp$tip + half_tip) %% n_points
-        if(tip_end == 0) tip_end <- n_points
-        
-        # Create tip region with wrap-around handling
-        if(tip_start <= tip_end) {
-          tip_region <- tip_start:tip_end
-        } else {
-          tip_region <- c(tip_start:n_points, 1:tip_end)
-        }
-        
-        # Blade region: between tip and shoulder
-        # For left side
-        left_blade_start <- (tip_end + 1) %% n_points
-        if(left_blade_start == 0) left_blade_start <- n_points
-        left_blade_end <- (kp$shoulder_left - 1) %% n_points
-        if(left_blade_end == 0) left_blade_end <- n_points
-        
-        # For right side
-        right_blade_start <- (kp$shoulder_right + 1) %% n_points
-        if(right_blade_start == 0) right_blade_start <- n_points
-        right_blade_end <- (tip_start - 1) %% n_points
-        if(right_blade_end == 0) right_blade_end <- n_points
-        
-        # Create blade regions with wrap-around handling
-        if(left_blade_start <= left_blade_end) {
-          left_blade_region <- left_blade_start:left_blade_end
-        } else {
-          left_blade_region <- c(left_blade_start:n_points, 1:left_blade_end)
-        }
-        
-        if(right_blade_start <= right_blade_end) {
-          right_blade_region <- right_blade_start:right_blade_end
-        } else {
-          right_blade_region <- c(right_blade_start:n_points, 1:right_blade_end)
-        }
-        
-        # Combine left and right blade regions
-        blade_region <- c(left_blade_region, right_blade_region)
-        
-        # Shoulder region: between blade and base
-        # For left side
-        left_shoulder_start <- kp$shoulder_left
-        left_shoulder_end <- (kp$base - 1) %% n_points
-        if(left_shoulder_end == 0) left_shoulder_end <- n_points
-        
-        # For right side
-        right_shoulder_start <- (kp$base + 1) %% n_points
-        if(right_shoulder_start == 0) right_shoulder_start <- n_points
-        right_shoulder_end <- kp$shoulder_right
-        
-        # Create shoulder regions with wrap-around handling
-        if(left_shoulder_start <= left_shoulder_end) {
-          left_shoulder_region <- left_shoulder_start:left_shoulder_end
-        } else {
-          left_shoulder_region <- c(left_shoulder_start:n_points, 1:left_shoulder_end)
-        }
-        
-        if(right_shoulder_start <= right_shoulder_end) {
-          right_shoulder_region <- right_shoulder_start:right_shoulder_end
-        } else {
-          right_shoulder_region <- c(right_shoulder_start:n_points, 1:right_shoulder_end)
-        }
-        
-        # Combine left and right shoulder regions
-        shoulder_region <- c(left_shoulder_region, right_shoulder_region)
-        
-        # Base region: centered around base point
-        base_size <- round(n_points * (20/100))  # Use default 20% for base
-        half_base <- floor(base_size / 2)
-        base_start <- (kp$base - half_base) %% n_points
-        if(base_start == 0) base_start <- n_points
-        base_end <- (kp$base + half_base) %% n_points
-        if(base_end == 0) base_end <- n_points
-        
-        # Create base region with wrap-around handling
-        if(base_start <= base_end) {
-          base_region <- base_start:base_end
-        } else {
-          base_region <- c(base_start:n_points, 1:base_end)
-        }
-        
-      } else if (input$region_method == "geometric") {
-        # Geometric region detection based on shape features
-        
-        # Calculate curvature if not already done
-        if (is.null(curvature_r())) {
-          curv <- calculate_curvature(mean_shape)
-          window_size <- ceiling(input$curvature_smoothing / 2) * 2 + 1  # Ensure odd number
-          smoothed_curv <- smooth_curvature(curv, window_size)
-        } else {
-          smoothed_curv <- curvature_r()
-        }
-        
-        # Find inflection points
-        inflection_points <- find_inflection_points(smoothed_curv, mean_shape, input$curvature_threshold)
-        
-        # Define regions
-        regions <- define_regions(mean_shape, inflection_points, smoothed_curv)
-        
-        # Extract regions
-        tip_region <- regions$tip
-        blade_region <- regions$blade
-        shoulder_region <- regions$shoulder
-        base_region <- regions$base
-        
-        # Log key points
-        log_text <- paste(current_log, 
-                          "\nGeometric detection found key points:",
-                          "\nTip: Point ", regions$key_points$tip,
-                          "\nLeft shoulder: Point ", regions$key_points$left_shoulder,
-                          "\nRight shoulder: Point ", regions$key_points$right_shoulder,
-                          "\nBase: Point ", regions$key_points$base,
-                          sep="")
-        processing_log(log_text)
-        
-      } else {
-        # Proportional region identification based on orientation and percentages
-        # Automatic region identification based on orientation
-        # Get user-defined proportions - ensure percentages sum to 100%
-        total_prop <- (input$tip_ratio + input$blade_ratio + input$shoulder_ratio + input$base_ratio) / 100
-        
-        # Normalize proportions if they don't sum to 1
-        tip_prop <- (input$tip_ratio / 100) / total_prop
-        blade_prop <- (input$blade_ratio / 100) / total_prop
-        shoulder_prop <- (input$shoulder_ratio / 100) / total_prop
-        base_prop <- (input$base_ratio / 100) / total_prop
-        
-        # Determine region indices based on orientation
-        if (input$orientation == "up") {
-          # Tip is at the top (start of coords)
-          tip_region <- 1:round(n_points * tip_prop)
-          
-          # Base is at the bottom
-          base_region <- (round(n_points * (1 - base_prop)) + 1):n_points
-          
-          # Shoulder is between blade and base
-          shoulder_start <- round(n_points * (1 - base_prop - shoulder_prop)) + 1
-          shoulder_end <- round(n_points * (1 - base_prop))
-          shoulder_region <- shoulder_start:shoulder_end
-          
-          # Blade is between tip and shoulder
-          blade_region <- (max(tip_region) + 1):(min(shoulder_region) - 1)
-          
-        } else if (input$orientation == "down") {
-          # Tip is at the bottom (mid of coords)
-          mid_point <- round(n_points / 2)
-          tip_size <- round(n_points * tip_prop)
-          tip_start <- mid_point - round(tip_size / 2)
-          tip_end <- mid_point + round(tip_size / 2)
-          tip_region <- tip_start:tip_end
-          
-          # Base as two sections at top
-          base_size <- round(n_points * base_prop)
-          half_base <- round(base_size / 2)
-          base_region1 <- 1:half_base
-          base_region2 <- (n_points - half_base + 1):n_points
-          base_region <- c(base_region1, base_region2)
-          
-          # Define shoulder regions on left and right
-          shoulder_size <- round(n_points * shoulder_prop)
-          half_shoulder <- round(shoulder_size / 2)
-          
-          # Left shoulder between base and blade
-          left_shoulder_start <- half_base + 1
-          left_shoulder_end <- left_shoulder_start + half_shoulder - 1
-          
-          # Right shoulder between blade and base
-          right_shoulder_start <- n_points - half_base - half_shoulder + 1
-          right_shoulder_end <- n_points - half_base
-          
-          shoulder_region <- c(left_shoulder_start:left_shoulder_end, 
-                               right_shoulder_start:right_shoulder_end)
-          
-          # Blade is the remaining points
-          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
-          
-        } else if (input$orientation == "left") {
-          # Tip is on the left
-          # Find leftmost point (minimum x-coordinate)
-          x_coords <- mean_shape[, 1]
-          leftmost_idx <- which.min(x_coords)
-          
-          # Define tip region centered around the leftmost point
-          tip_size <- round(n_points * tip_prop)
-          half_tip <- floor(tip_size / 2)
-          
-          # Create indices with wrap-around handling
-          tip_start <- (leftmost_idx - half_tip) %% n_points
-          if (tip_start == 0) tip_start <- n_points
-          tip_end <- (leftmost_idx + half_tip) %% n_points
-          if (tip_end == 0) tip_end <- n_points
-          
-          # Handle wrap-around for indices
-          if (tip_start <= tip_end) {
-            tip_region <- tip_start:tip_end
-          } else {
-            tip_region <- c(tip_start:n_points, 1:tip_end)
-          }
-          
-          # Find rightmost point for base (maximum x-coordinate)
-          rightmost_idx <- which.max(x_coords)
-          
-          # Define base region centered around the rightmost point
-          base_size <- round(n_points * base_prop)
-          half_base <- floor(base_size / 2)
-          
-          # Create indices with wrap-around handling
-          base_start <- (rightmost_idx - half_base) %% n_points
-          if (base_start == 0) base_start <- n_points
-          base_end <- (rightmost_idx + half_base) %% n_points
-          if (base_end == 0) base_end <- n_points
-          
-          # Handle wrap-around for indices
-          if (base_start <= base_end) {
-            base_region <- base_start:base_end
-          } else {
-            base_region <- c(base_start:n_points, 1:base_end)
-          }
-          
-          # Define shoulder regions - between blade and base
-          # Top shoulder
-          top_shoulder_size <- round(n_points * shoulder_prop / 2)
-          
-          # Top shoulder (going clockwise from tip to base)
-          top_shoulder_start <- (tip_end + 1) %% n_points
-          if (top_shoulder_start == 0) top_shoulder_start <- n_points
-          top_shoulder_end <- (top_shoulder_start + top_shoulder_size - 1) %% n_points
-          if (top_shoulder_end == 0) top_shoulder_end <- n_points
-          
-          # Bottom shoulder (going counter-clockwise from base to tip)
-          bottom_shoulder_start <- (base_end + 1) %% n_points
-          if (bottom_shoulder_start == 0) bottom_shoulder_start <- n_points
-          bottom_shoulder_end <- (bottom_shoulder_start + top_shoulder_size - 1) %% n_points
-          if (bottom_shoulder_end == 0) bottom_shoulder_end <- n_points
-          
-          # Create shoulder regions with wrap-around handling
-          if (top_shoulder_start <= top_shoulder_end) {
-            top_shoulder_region <- top_shoulder_start:top_shoulder_end
-          } else {
-            top_shoulder_region <- c(top_shoulder_start:n_points, 1:top_shoulder_end)
-          }
-          
-          if (bottom_shoulder_start <= bottom_shoulder_end) {
-            bottom_shoulder_region <- bottom_shoulder_start:bottom_shoulder_end
-          } else {
-            bottom_shoulder_region <- c(bottom_shoulder_start:n_points, 1:bottom_shoulder_end)
-          }
-          
-          # Combine shoulder regions
-          shoulder_region <- c(top_shoulder_region, bottom_shoulder_region)
-          
-          # Blade is everything that's not tip, shoulder, or base
-          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
-          
-        } else { # "right"
-          # Tip is on the right (find rightmost point)
-          x_coords <- mean_shape[, 1]
-          rightmost_idx <- which.max(x_coords)
-          
-          # Define tip region centered around the rightmost point
-          tip_size <- round(n_points * tip_prop)
-          half_tip <- floor(tip_size / 2)
-          
-          # Create indices with wrap-around handling
-          tip_start <- (rightmost_idx - half_tip) %% n_points
-          if (tip_start == 0) tip_start <- n_points
-          tip_end <- (rightmost_idx + half_tip) %% n_points
-          if (tip_end == 0) tip_end <- n_points
-          
-          # Handle wrap-around for indices
-          if (tip_start <= tip_end) {
-            tip_region <- tip_start:tip_end
-          } else {
-            tip_region <- c(tip_start:n_points, 1:tip_end)
-          }
-          
-          # Find leftmost point for base
-          leftmost_idx <- which.min(x_coords)
-          
-          # Define base region centered around the leftmost point
-          base_size <- round(n_points * base_prop)
-          half_base <- floor(base_size / 2)
-          
-          # Create indices with wrap-around handling
-          base_start <- (leftmost_idx - half_base) %% n_points
-          if (base_start == 0) base_start <- n_points
-          base_end <- (leftmost_idx + half_base) %% n_points
-          if (base_end == 0) base_end <- n_points
-          
-          # Handle wrap-around for indices
-          if (base_start <= base_end) {
-            base_region <- base_start:base_end
-          } else {
-            base_region <- c(base_start:n_points, 1:base_end)
-          }
-          
-          # Define shoulder regions - between blade and base
-          # Top shoulder
-          top_shoulder_size <- round(n_points * shoulder_prop / 2)
-          
-          # Top shoulder (going counter-clockwise from tip to base)
-          top_shoulder_start <- (tip_end + 1) %% n_points
-          if (top_shoulder_start == 0) top_shoulder_start <- n_points
-          top_shoulder_end <- (top_shoulder_start + top_shoulder_size - 1) %% n_points
-          if (top_shoulder_end == 0) top_shoulder_end <- n_points
-          
-          # Bottom shoulder (going clockwise from base to tip)
-          bottom_shoulder_start <- (base_end + 1) %% n_points
-          if (bottom_shoulder_start == 0) bottom_shoulder_start <- n_points
-          bottom_shoulder_end <- (bottom_shoulder_start + top_shoulder_size - 1) %% n_points
-          if (bottom_shoulder_end == 0) bottom_shoulder_end <- n_points
-          
-          # Create shoulder regions with wrap-around handling
-          if (top_shoulder_start <= top_shoulder_end) {
-            top_shoulder_region <- top_shoulder_start:top_shoulder_end
-          } else {
-            top_shoulder_region <- c(top_shoulder_start:n_points, 1:top_shoulder_end)
-          }
-          
-          if (bottom_shoulder_start <= bottom_shoulder_end) {
-            bottom_shoulder_region <- bottom_shoulder_start:bottom_shoulder_end
-          } else {
-            bottom_shoulder_region <- c(bottom_shoulder_start:n_points, 1:bottom_shoulder_end)
-          }
-          
-          # Combine shoulder regions
-          shoulder_region <- c(top_shoulder_region, bottom_shoulder_region)
-          
-          # Blade is everything that's not tip, shoulder, or base
-          blade_region <- setdiff(1:n_points, c(tip_region, shoulder_region, base_region))
-        }
-      }
-      
-      # Ensure regions stay within bounds
-      tip_region <- tip_region[tip_region > 0 & tip_region <= n_points]
-      blade_region <- blade_region[blade_region > 0 & blade_region <= n_points]
-      shoulder_region <- shoulder_region[shoulder_region > 0 & shoulder_region <= n_points]
-      base_region <- base_region[base_region > 0 & base_region <= n_points]
-      
-      # Create partition
-      partition <- rep(0, n_points)
-      partition[tip_region] <- 1  # Tip
-      partition[blade_region] <- 2  # Blade
-      partition[shoulder_region] <- 3  # Shoulder
-      partition[base_region] <- 4  # Base
-      
-      # Store results
-      modularity_r(list(
-        partition = partition,
-        regions = list(tip = tip_region, blade = blade_region, shoulder = shoulder_region, base = base_region),
-        n_points = n_points
-      ))
-      
-      # Update log and switch to Results tab
-      processing_log(paste(current_log, "\nAnalysis complete! Switching to Results tab.", sep=""))
-      updateTabsetPanel(session, "main_tabs", selected = "Results")
-      
-    }, error = function(e) {
-      # Error handling - update log
-      processing_log(paste(current_log, "\nError during analysis:", e$message, sep=""))
-    })
-  })
-  
-  # Display grid of outlines
-  output$grid_plot <- renderPlot({
-    req(outlines_r())
-    panel(outlines_r(), names = TRUE, cex.names = 0.7)
-  })
-  
-  # Display stacked outlines
-  output$stack_plot <- renderPlot({
-    req(outlines_r())
-    stack(outlines_r(), border = "black", col = "#00000010", lwd = 1,
-          main = "Stacked & Aligned Outlines")
-  })
-  
-  # Display actual EFA harmonics power
-  output$harmonic_plot <- renderPlot({
-    req(efa_result_r())
-    efa <- efa_result_r()
-    
-    # Extract harmonics info and ensure it's valid
-    n_harmonics <- efa$nb.h
-    
-    # Add debug print and validation
-    print(paste("n_harmonics type:", class(n_harmonics), "value:", n_harmonics))
-    
-    # Check if n_harmonics is valid
-    if (is.null(n_harmonics) || !is.numeric(n_harmonics) || length(n_harmonics) == 0 || n_harmonics < 1) {
-      # Fallback to a default value
-      n_harmonics <- 20
-      print("Using default n_harmonics = 20")
-    }
-    
-    # Calculate actual power for each harmonic from the coefficients
-    harmonic_power <- numeric(n_harmonics)
-    
-    # Debug check if coefficient structure exists
-    if (is.null(efa$coe) || !is.matrix(efa$coe)) {
-      print("Warning: EFA coefficients matrix is not available or not in expected format")
-      print(paste("efa$coe class:", class(efa$coe)))
-      print(paste("efa$coe dimensions:", if(is.matrix(efa$coe)) paste(dim(efa$coe), collapse="x") else "N/A"))
-      
-      # Fallback to theoretical distribution if we can't access actual coefficients
-      harmonic_power <- 1/(1:n_harmonics)^2
-      print("Using theoretical power distribution as fallback")
-    } else {
-      # For each harmonic, calculate the power from its coefficients
-      for (h in 1:n_harmonics) {
-        # Get indices for this harmonic's coefficients
-        coef_indices <- (4*(h-1) + 1):(4*h)
-        
-        # Check if we have enough coefficients
-        if (max(coef_indices) <= ncol(efa$coe)) {
-          # Average the squared coefficients across all specimens
-          harmonic_power[h] <- mean(apply(efa$coe[, coef_indices, drop=FALSE], 1, function(x) sum(x^2)))
-        } else {
-          # Handle edge case if coefficients are missing
-          harmonic_power[h] <- 0
-          print(paste("Warning: coefficients missing for harmonic", h))
-        }
-      }
-    }
-    
-    # Calculate normalized power as percentage
-    total_power <- sum(harmonic_power)
-    if (total_power > 0) {
-      power_percent <- 100 * harmonic_power / total_power
-    } else {
-      # Handle edge case of zero total power
-      power_percent <- rep(0, n_harmonics)
-      power_percent[1] <- 100  # Assign all power to first harmonic as fallback
-    }
-    
-    # Calculate cumulative power
-    cumulative <- cumsum(power_percent)
-    
-    # Create a barplot with cumulative line
-    par(mar = c(5, 4, 4, 4) + 0.1)
-    bp <- barplot(power_percent, 
-                  ylim = c(0, max(100, max(power_percent) * 1.2)),
-                  main = "Harmonic Power Distribution", 
-                  xlab = "Harmonic", 
-                  ylab = "Power (%)",
-                  col = "skyblue")
-    
-    # Add cumulative line
-    par(new = TRUE)
-    plot(bp, cumulative, type = "b", pch = 19, col = "red",
-         axes = FALSE, xlab = "", ylab = "")
-    axis(side = 4, at = pretty(range(cumulative)))
-    mtext("Cumulative (%)", side = 4, line = 3)
-    
-    # Add a legend
-    legend("topright", 
-           legend = c("Power", "Cumulative"), 
-           fill = c("skyblue", NA),
-           lty = c(NA, 1),
-           pch = c(NA, 19),
-           col = c(NA, "red"),
-           bty = "n")
-    
-    # Add note about 90% cumulative power if applicable
-    h_90_idx <- which(cumulative >= 90)
-    if (length(h_90_idx) > 0) {
-      h_90 <- min(h_90_idx)
-      mtext(paste0("90% of shape information captured by first ", h_90, " harmonics"), 
-            side = 3, line = 0, cex = 0.8)
-    }
-  })
-  
-  # Display PCA morphospace
-  output$morpho_plot <- renderPlot({
-    req(pca_result_r())
-    plot_PCA(pca_result_r(), morphospace = TRUE)
-  })
-  
-  # Display Thin-Plate Spline visualizations
-  output$tps_plot <- renderPlot({
-    req(tps_grid_r(), outlines_r())
-    tps <- tps_grid_r()
-    
-    # Create a 2x2 layout
-    par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
-    
-    # PC1 negative - use actual shape
-    plot(tps$mean, type = "l", asp = 1, main = "PC1 Negative", 
-         xlab = "", ylab = "", axes = FALSE, col = "gray")
-    lines(tps$pc1_neg, col = "red", lwd = 2)
-    
-    # PC1 positive - use actual shape
-    plot(tps$mean, type = "l", asp = 1, main = "PC1 Positive", 
-         xlab = "", ylab = "", axes = FALSE, col = "gray")
-    lines(tps$pc1_pos, col = "blue", lwd = 2)
-    
-    # PC2 negative - use actual shape
-    plot(tps$mean, type = "l", asp = 1, main = "PC2 Negative", 
-         xlab = "", ylab = "", axes = FALSE, col = "gray")
-    lines(tps$pc2_neg, col = "red", lwd = 2)
-    
-    # PC2 positive - use actual shape
-    plot(tps$mean, type = "l", asp = 1, main = "PC2 Positive", 
-         xlab = "", ylab = "", axes = FALSE, col = "gray")
-    lines(tps$pc2_pos, col = "blue", lwd = 2)
-    
-    # Reset layout
-    par(mfrow = c(1, 1))
-    
-    # Add title
-    mtext("Shape Variation at PCA Extremes", 
-          side = 3, line = -2, outer = TRUE, cex = 1.5)
-  })
-  
-  # Display Integration/Modularity visualization with improved region labeling
-  output$modularity_plot <- renderPlot({
-    req(modularity_r(), outlines_r())
-    mod <- modularity_r()
-    outlines <- outlines_r()
-    
-    # Set up the plot layout for four regions
-    layout(matrix(c(1,2,3,4,5,6), 3, 2, byrow = TRUE))
-    
-    # Plot 1: Mean shape with regions colored
-    mean_shape <- custom_mshape(outlines$coo)
-    
-    # Plot the mean shape with clearer region indicators
-    plot(mean_shape, type = "n", asp = 1, 
-         main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
-    
-    # Plot each region with different colors
-    points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
-    points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
-    points(mean_shape[mod$regions$shoulder, ], col = "purple", pch = 19, cex = 1)
-    points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
-    
-    # Connect points to show outline
-    lines(mean_shape, col = "gray")
-    
-    # Add region labels
-    tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
-    blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
-    shoulder_center <- colMeans(mean_shape[mod$regions$shoulder, , drop = FALSE])
-    base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
-    
-    # Add text labels near the center of each region
-    text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
-    text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
-    text(shoulder_center[1], shoulder_center[2], "SHOULDER", col = "darkmagenta", font = 2)
-    text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
-    
-    # Add legend
-    legend("topright", legend = c("Tip", "Blade", "Shoulder", "Base"),
-           col = c("red", "green", "purple", "blue"), pch = 19, cex = 0.8)
-    
-    # Plot 2: Variance by region
-    # Calculate variance in each region across all specimens
-    tip_var <- numeric(length(mod$regions$tip))
-    blade_var <- numeric(length(mod$regions$blade))
-    shoulder_var <- numeric(length(mod$regions$shoulder))
-    base_var <- numeric(length(mod$regions$base))
-    
-    # For each specimen, calculate distance from mean
-    n_specimens <- length(outlines$coo)
-    
-    for (i in 1:length(mod$regions$tip)) {
-      point_dists <- numeric(n_specimens)
-      for (j in 1:n_specimens) {
-        spec_point <- outlines$coo[[j]][mod$regions$tip[i], ]
-        mean_point <- mean_shape[mod$regions$tip[i], ]
-        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-      }
-      tip_var[i] <- var(point_dists)
-    }
-    
-    for (i in 1:length(mod$regions$blade)) {
-      point_dists <- numeric(n_specimens)
-      for (j in 1:n_specimens) {
-        spec_point <- outlines$coo[[j]][mod$regions$blade[i], ]
-        mean_point <- mean_shape[mod$regions$blade[i], ]
-        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-      }
-      blade_var[i] <- var(point_dists)
-    }
-    
-    for (i in 1:length(mod$regions$shoulder)) {
-      point_dists <- numeric(n_specimens)
-      for (j in 1:n_specimens) {
-        spec_point <- outlines$coo[[j]][mod$regions$shoulder[i], ]
-        mean_point <- mean_shape[mod$regions$shoulder[i], ]
-        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-      }
-      shoulder_var[i] <- var(point_dists)
-    }
-    
-    for (i in 1:length(mod$regions$base)) {
-      point_dists <- numeric(n_specimens)
-      for (j in 1:n_specimens) {
-        spec_point <- outlines$coo[[j]][mod$regions$base[i], ]
-        mean_point <- mean_shape[mod$regions$base[i], ]
-        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-      }
-      base_var[i] <- var(point_dists)
-    }
-    
-    # Calculate mean variance for each region
-    region_vars <- c(mean(tip_var), mean(blade_var), mean(shoulder_var), mean(base_var))
-    names(region_vars) <- c("Tip", "Blade", "Shoulder", "Base")
-    
-    # Create barplot
-    barplot(region_vars, col = c("red", "green", "purple", "blue"),
-            main = "Variance by Region", ylab = "Mean Variance")
-    
-    # Plot 3: Heat map of variance along outline
-    point_vars <- numeric(mod$n_points)
-    
-    # Calculate variance at each point
-    for (i in 1:mod$n_points) {
-      point_dists <- numeric(n_specimens)
-      for (j in 1:n_specimens) {
-        spec_point <- outlines$coo[[j]][i, ]
-        mean_point <- mean_shape[i, ]
-        point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-      }
-      point_vars[i] <- var(point_dists)
-    }
-    
-    # Plot mean shape
-    plot(mean_shape, type = "n", asp = 1, 
-         main = "Variance Heatmap", axes = FALSE, xlab = "", ylab = "")
-    
-    # Color points by variance
-    # Normalize variance values to 0-1 range for coloring
-    norm_vars <- (point_vars - min(point_vars)) / (max(point_vars) - min(point_vars))
-    
-    # Plot points colored by variance
-    for (i in 1:mod$n_points) {
-      # Create color from blue (low variance) to red (high variance)
-      col_val <- rgb(norm_vars[i], 0, 1-norm_vars[i])
-      points(mean_shape[i, 1], mean_shape[i, 2], col = col_val, pch = 19, cex = 1.5)
-    }
-    
-    # Connect points to show outline
-    lines(mean_shape, col = "gray")
-    
-    # Plot 4: Region Contributions to PC1
-    # Calculate contributions of each region to PC1 variation
-    pc1_scores <- pca_result_r()$x[,1]
-    
-    # Get min and max specimens on PC1
-    pc1_pos_idx <- which.max(pc1_scores)
-    pc1_neg_idx <- which.min(pc1_scores)
-    
-    # Calculate contribution for each region
-    tip_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$tip,] - 
-                                     outlines$coo[[pc1_neg_idx]][mod$regions$tip,])^2)))
-    
-    blade_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$blade,] - 
-                                       outlines$coo[[pc1_neg_idx]][mod$regions$blade,])^2)))
-    
-    shoulder_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$shoulder,] - 
-                                          outlines$coo[[pc1_neg_idx]][mod$regions$shoulder,])^2)))
-    
-    base_cont <- mean(sqrt(rowSums((outlines$coo[[pc1_pos_idx]][mod$regions$base,] - 
-                                      outlines$coo[[pc1_neg_idx]][mod$regions$base,])^2)))
-    
-    # Normalize contributions
-    pc1_cont <- c(tip_cont, blade_cont, shoulder_cont, base_cont)
-    pc1_cont <- 100 * pc1_cont / sum(pc1_cont)
-    names(pc1_cont) <- c("Tip", "Blade", "Shoulder", "Base")
-    
-    # Create barplot
-    barplot(pc1_cont, col = c("red", "green", "purple", "blue"),
-            main = "Region Contributions to PC1", ylab = "Contribution (%)")
-    
-    # Plot 5: Region correlation matrix
-    # Function to calculate mean distance between two sets of points
-    calc_distance <- function(shape1, shape2) {
-      return(mean(sqrt(rowSums((shape1 - shape2)^2))))
-    }
-    
-    # Calculate distances between all pairs of specimens
-    n_specimens <- length(outlines$coo)
-    
-    # Matrix to store distances for each region
-    tip_dists <- matrix(0, n_specimens, n_specimens)
-    blade_dists <- matrix(0, n_specimens, n_specimens)
-    shoulder_dists <- matrix(0, n_specimens, n_specimens)
-    base_dists <- matrix(0, n_specimens, n_specimens)
-    
-    for (i in 1:(n_specimens-1)) {
-      for (j in (i+1):n_specimens) {
-        # Tip distances
-        tip_dists[i,j] <- tip_dists[j,i] <- calc_distance(
-          outlines$coo[[i]][mod$regions$tip,], 
-          outlines$coo[[j]][mod$regions$tip,]
-        )
-        
-        # Blade distances
-        blade_dists[i,j] <- blade_dists[j,i] <- calc_distance(
-          outlines$coo[[i]][mod$regions$blade,], 
-          outlines$coo[[j]][mod$regions$blade,]
-        )
-        
-        # Shoulder distances
-        shoulder_dists[i,j] <- shoulder_dists[j,i] <- calc_distance(
-          outlines$coo[[i]][mod$regions$shoulder,], 
-          outlines$coo[[j]][mod$regions$shoulder,]
-        )
-        
-        # Base distances
-        base_dists[i,j] <- base_dists[j,i] <- calc_distance(
-          outlines$coo[[i]][mod$regions$base,], 
-          outlines$coo[[j]][mod$regions$base,]
-        )
-      }
-    }
-    
-    # Calculate correlations between distance matrices
-    tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
-    tip_shoulder_cor <- cor(as.vector(tip_dists), as.vector(shoulder_dists))
-    tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
-    blade_shoulder_cor <- cor(as.vector(blade_dists), as.vector(shoulder_dists))
-    blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
-    shoulder_base_cor <- cor(as.vector(shoulder_dists), as.vector(base_dists))
-    
-    # Create correlation matrix
-    cor_matrix <- matrix(1, 4, 4)
-    cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
-    cor_matrix[1,3] <- cor_matrix[3,1] <- tip_shoulder_cor
-    cor_matrix[1,4] <- cor_matrix[4,1] <- tip_base_cor
-    cor_matrix[2,3] <- cor_matrix[3,2] <- blade_shoulder_cor
-    cor_matrix[2,4] <- cor_matrix[4,2] <- blade_base_cor
-    cor_matrix[3,4] <- cor_matrix[4,3] <- shoulder_base_cor
-    
-    # Create heatmap
-    image(1:4, 1:4, cor_matrix, axes = FALSE, 
-          col = colorRampPalette(c("blue", "white", "red"))(100),
-          main = "Region Correlations",
-          xlab = "", ylab = "")
-    axis(1, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
-    axis(2, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
-    
-    # Add correlation values
-    for (i in 1:4) {
-      for (j in 1:4) {
-        text(i, j, round(cor_matrix[i,j], 2), col = "black")
-      }
-    }
-    
-    # Plot 6: Modularity index calculation
-    # Calculate CR coefficient (Covariance Ratio) of Adams (2016)
-    # A simplified version - lower values indicate stronger modularity
-    
-    # Create matrices for within and between region covariances
-    within_cov <- 0
-    between_cov <- 0
-    
-    # Calculate within-region covariances
-    tip_cov <- mean(tip_dists[upper.tri(tip_dists)])
-    blade_cov <- mean(blade_dists[upper.tri(blade_dists)])
-    shoulder_cov <- mean(shoulder_dists[upper.tri(shoulder_dists)])
-    base_cov <- mean(base_dists[upper.tri(base_dists)])
-    
-    # Sum within-module covariances
-    within_cov <- tip_cov + blade_cov + shoulder_cov + base_cov
-    
-    # Calculate between-region covariances
-    between_cov <- tip_blade_cor + tip_shoulder_cor + tip_base_cor + 
-      blade_shoulder_cor + blade_base_cor + shoulder_base_cor
-    
-    # Calculate simplified modularity index (lower = more modular)
-    modularity_index <- between_cov / within_cov
-    
-    # Pairwise integration indices
-    pair_indices <- c(tip_blade_cor, tip_shoulder_cor, tip_base_cor, 
-                      blade_shoulder_cor, blade_base_cor, shoulder_base_cor)
-    names(pair_indices) <- c("Tip-Blade", "Tip-Shoulder", "Tip-Base", 
-                             "Blade-Shoulder", "Blade-Base", "Shoulder-Base")
-    
-    # Create barplot of pairwise integration
-    barplot(pair_indices, 
-            main = paste("Integration Between Regions\n(Modularity Index =", 
-                         round(modularity_index, 3), ")"),
-            las = 2, cex.names = 0.7, ylim = c(0, 1),
-            col = rainbow(6))
-    abline(h = 0.5, lty = 2)
-    
-    # Reset layout
-    par(mfrow = c(1, 1))
-    
-    # Add title
-    mtext("Integration & Modularity Analysis", 
-          side = 3, line = -2, outer = TRUE, cex = 1.5)
-  })
-  
-  # Download handler for PDF graphics - updated for 4 regions
-  output$download_pdf <- downloadHandler(
-    filename = function() {
-      paste("MorphometricAnalysis_", format(Sys.time(), "%Y%m%d-%H%M%S"), ".pdf", sep = "")
-    },
-    content = function(file) {
-      # Check if analysis results exist
-      if (is.null(outlines_r())) {
-        return(NULL)
-      }
-      
-      # Create PDF with multiple plots
-      pdf(file, width = 8.5, height = 11)
-      
-      # Title page
-      plot.new()
-      text(0.5, 0.6, "Morphometric Analysis Results", cex = 2)
-      text(0.5, 0.5, paste("Generated on", format(Sys.Date(), "%B %d, %Y")), cex = 1.2)
-      text(0.5, 0.4, paste("Number of specimens:", length(outlines_r()$coo)), cex = 1.2)
-      text(0.5, 0.3, paste("Region detection method:", input$region_method), cex = 1.2)
-      
-      # Grid of outlines
-      panel(outlines_r(), names = TRUE, cex.names = 0.7)
-      title("Individual Outlines")
-      
-      # Stacked outlines
-      stack(outlines_r(), border = "black", col = "#00000010", lwd = 1)
-      title("Stacked & Aligned Outlines")
-      
-      # Actual harmonic power
-      efa <- efa_result_r()
-      n_harmonics <- efa$nb.h
-      
-      # Calculate actual power for each harmonic from the coefficients
-      harmonic_power <- numeric(n_harmonics)
-      for (h in 1:n_harmonics) {
-        coef_indices <- (4*(h-1) + 1):(4*h)
-        if (max(coef_indices) <= ncol(efa$coe)) {
-          harmonic_power[h] <- mean(apply(efa$coe[, coef_indices], 1, function(x) sum(x^2)))
-        } else {
-          harmonic_power[h] <- 0
-        }
-      }
-      
-      # Calculate normalized power as percentage
-      power_percent <- 100 * harmonic_power / sum(harmonic_power)
-      cumulative <- cumsum(power_percent)
-      
-      par(mar = c(5, 4, 4, 4) + 0.1)
-      bp <- barplot(power_percent, 
-                    ylim = c(0, max(100, max(power_percent) * 1.2)),
-                    main = "Actual Harmonic Power Distribution", 
-                    xlab = "Harmonic", 
-                    ylab = "Power (%)",
-                    col = "skyblue")
-      
-      par(new = TRUE)
-      plot(bp, cumulative, type = "b", pch = 19, col = "red",
-           axes = FALSE, xlab = "", ylab = "")
-      axis(side = 4, at = pretty(range(cumulative)))
-      mtext("Cumulative (%)", side = 4, line = 3)
-      
-      # PCA visualization if available
-      if (!is.null(pca_result_r())) {
-        # Use plot_PCA without main argument, then add title separately
-        plot_PCA(pca_result_r(), morphospace = TRUE)
-        title("PCA Morphospace")
-        
-        # PCA summary
-        plot.new()
-        grid <- pca_result_r()$x
-        pc1_var <- round(100 * pca_result_r()$eig[1] / sum(pca_result_r()$eig), 1)
-        pc2_var <- round(100 * pca_result_r()$eig[2] / sum(pca_result_r()$eig), 1)
-        
-        text(0.5, 0.9, "PCA Summary", cex = 1.5)
-        text(0.5, 0.8, paste("PC1 explains", pc1_var, "% of variance"), cex = 1.2)
-        text(0.5, 0.7, paste("PC2 explains", pc2_var, "% of variance"), cex = 1.2)
-        text(0.5, 0.6, paste("Cumulative:", pc1_var + pc2_var, "%"), cex = 1.2)
-        
-        # Range on PC1 and PC2
-        text(0.5, 0.4, paste("PC1 range:", round(min(grid[,1]), 2), "to", round(max(grid[,1]), 2)), cex = 1)
-        text(0.5, 0.3, paste("PC2 range:", round(min(grid[,2]), 2), "to", round(max(grid[,2]), 2)), cex = 1)
-      }
-      
-      # Add TPS grid if available
-      if (!is.null(tps_grid_r())) {
-        tps <- tps_grid_r()
-        
-        # Create a 2x2 layout inside the PDF
-        par(mfrow = c(2, 2), mar = c(1, 1, 3, 1))
-        
-        # PC1 negative - use actual shape
-        plot(tps$mean, type = "l", asp = 1, main = "PC1 Negative", 
-             xlab = "", ylab = "", axes = FALSE, col = "gray")
-        lines(tps$pc1_neg, col = "red", lwd = 2)
-        
-        # PC1 positive - use actual shape
-        plot(tps$mean, type = "l", asp = 1, main = "PC1 Positive", 
-             xlab = "", ylab = "", axes = FALSE, col = "gray")
-        lines(tps$pc1_pos, col = "blue", lwd = 2)
-        
-        # PC2 negative - use actual shape
-        plot(tps$mean, type = "l", asp = 1, main = "PC2 Negative", 
-             xlab = "", ylab = "", axes = FALSE, col = "gray")
-        lines(tps$pc2_neg, col = "red", lwd = 2)
-        
-        # PC2 positive - use actual shape
-        plot(tps$mean, type = "l", asp = 1, main = "PC2 Positive", 
-             xlab = "", ylab = "", axes = FALSE, col = "gray")
-        lines(tps$pc2_pos, col = "blue", lwd = 2)
-        
-        # Reset layout
-        par(mfrow = c(1, 1))
-        
-        # Add title for TPS page
-        title("Shape Variation at PCA Extremes", line = -1)
-      }
-      
-      # Add modularity plots if available - updated for 4 regions
-      if (!is.null(modularity_r()) && !is.null(outlines_r())) {
-        mod <- modularity_r()
-        outlines <- outlines_r()
-        mean_shape <- custom_mshape(outlines$coo)
-        
-        # Plot regions on outline
-        plot(mean_shape, type = "n", asp = 1, 
-             main = "Shape Regions", axes = FALSE, xlab = "", ylab = "")
-        
-        # Plot each region with different colors
-        points(mean_shape[mod$regions$tip, ], col = "red", pch = 19, cex = 1)
-        points(mean_shape[mod$regions$blade, ], col = "green", pch = 19, cex = 1)
-        points(mean_shape[mod$regions$shoulder, ], col = "purple", pch = 19, cex = 1)
-        points(mean_shape[mod$regions$base, ], col = "blue", pch = 19, cex = 1)
-        
-        # Connect points to show outline
-        lines(mean_shape, col = "gray")
-        
-        # Add region labels
-        tip_center <- colMeans(mean_shape[mod$regions$tip, , drop = FALSE])
-        blade_center <- colMeans(mean_shape[mod$regions$blade, , drop = FALSE])
-        shoulder_center <- colMeans(mean_shape[mod$regions$shoulder, , drop = FALSE])
-        base_center <- colMeans(mean_shape[mod$regions$base, , drop = FALSE])
-        
-        # Add text labels near the center of each region
-        text(tip_center[1], tip_center[2], "TIP", col = "darkred", font = 2)
-        text(blade_center[1], blade_center[2], "BLADE", col = "darkgreen", font = 2)
-        text(shoulder_center[1], shoulder_center[2], "SHOULDER", col = "darkmagenta", font = 2)
-        text(base_center[1], base_center[2], "BASE", col = "darkblue", font = 2)
-        
-        # Add legend
-        legend("topright", legend = c("Tip", "Blade", "Shoulder", "Base"),
-               col = c("red", "green", "purple", "blue"), pch = 19, cex = 0.8)
-        
-        # Calculate variance for each region
-        # Calculate variance in each region across all specimens
-        tip_var <- numeric(length(mod$regions$tip))
-        blade_var <- numeric(length(mod$regions$blade))
-        shoulder_var <- numeric(length(mod$regions$shoulder))
-        base_var <- numeric(length(mod$regions$base))
-        
-        # For each specimen, calculate distance from mean
-        n_specimens <- length(outlines$coo)
-        
-        for (i in 1:length(mod$regions$tip)) {
-          point_dists <- numeric(n_specimens)
-          for (j in 1:n_specimens) {
-            spec_point <- outlines$coo[[j]][mod$regions$tip[i], ]
-            mean_point <- mean_shape[mod$regions$tip[i], ]
-            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-          }
-          tip_var[i] <- var(point_dists)
-        }
-        
-        for (i in 1:length(mod$regions$blade)) {
-          point_dists <- numeric(n_specimens)
-          for (j in 1:n_specimens) {
-            spec_point <- outlines$coo[[j]][mod$regions$blade[i], ]
-            mean_point <- mean_shape[mod$regions$blade[i], ]
-            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-          }
-          blade_var[i] <- var(point_dists)
-        }
-        
-        for (i in 1:length(mod$regions$shoulder)) {
-          point_dists <- numeric(n_specimens)
-          for (j in 1:n_specimens) {
-            spec_point <- outlines$coo[[j]][mod$regions$shoulder[i], ]
-            mean_point <- mean_shape[mod$regions$shoulder[i], ]
-            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-          }
-          shoulder_var[i] <- var(point_dists)
-        }
-        
-        for (i in 1:length(mod$regions$base)) {
-          point_dists <- numeric(n_specimens)
-          for (j in 1:n_specimens) {
-            spec_point <- outlines$coo[[j]][mod$regions$base[i], ]
-            mean_point <- mean_shape[mod$regions$base[i], ]
-            point_dists[j] <- sqrt(sum((spec_point - mean_point)^2))
-          }
-          base_var[i] <- var(point_dists)
-        }
-        
-        # Calculate mean variance for each region
-        region_vars <- c(mean(tip_var), mean(blade_var), mean(shoulder_var), mean(base_var))
-        names(region_vars) <- c("Tip", "Blade", "Shoulder", "Base")
-        
-        # Variance barplot
-        barplot(region_vars, col = c("red", "green", "purple", "blue"),
-                main = "Variance by Region", ylab = "Mean Variance")
-        
-        # Function to calculate mean distance between two sets of points
-        calc_distance <- function(shape1, shape2) {
-          return(mean(sqrt(rowSums((shape1 - shape2)^2))))
-        }
-        
-        # Calculate distances between all pairs of specimens
-        # Matrix to store distances for each region
-        tip_dists <- matrix(0, n_specimens, n_specimens)
-        blade_dists <- matrix(0, n_specimens, n_specimens)
-        shoulder_dists <- matrix(0, n_specimens, n_specimens)
-        base_dists <- matrix(0, n_specimens, n_specimens)
-        
-        for (i in 1:(n_specimens-1)) {
-          for (j in (i+1):n_specimens) {
-            # Tip distances
-            tip_dists[i,j] <- tip_dists[j,i] <- calc_distance(
-              outlines$coo[[i]][mod$regions$tip,], 
-              outlines$coo[[j]][mod$regions$tip,]
-            )
-            
-            # Blade distances
-            blade_dists[i,j] <- blade_dists[j,i] <- calc_distance(
-              outlines$coo[[i]][mod$regions$blade,], 
-              outlines$coo[[j]][mod$regions$blade,]
-            )
-            
-            # Shoulder distances
-            shoulder_dists[i,j] <- shoulder_dists[j,i] <- calc_distance(
-              outlines$coo[[i]][mod$regions$shoulder,], 
-              outlines$coo[[j]][mod$regions$shoulder,]
-            )
-            
-            # Base distances
-            base_dists[i,j] <- base_dists[j,i] <- calc_distance(
-              outlines$coo[[i]][mod$regions$base,], 
-              outlines$coo[[j]][mod$regions$base,]
-            )
-          }
-        }
-        
-        # Calculate correlations between distance matrices
-        tip_blade_cor <- cor(as.vector(tip_dists), as.vector(blade_dists))
-        tip_shoulder_cor <- cor(as.vector(tip_dists), as.vector(shoulder_dists))
-        tip_base_cor <- cor(as.vector(tip_dists), as.vector(base_dists))
-        blade_shoulder_cor <- cor(as.vector(blade_dists), as.vector(shoulder_dists))
-        blade_base_cor <- cor(as.vector(blade_dists), as.vector(base_dists))
-        shoulder_base_cor <- cor(as.vector(shoulder_dists), as.vector(base_dists))
-        
-        # Create correlation matrix
-        cor_matrix <- matrix(1, 4, 4)
-        cor_matrix[1,2] <- cor_matrix[2,1] <- tip_blade_cor
-        cor_matrix[1,3] <- cor_matrix[3,1] <- tip_shoulder_cor
-        cor_matrix[1,4] <- cor_matrix[4,1] <- tip_base_cor
-        cor_matrix[2,3] <- cor_matrix[3,2] <- blade_shoulder_cor
-        cor_matrix[2,4] <- cor_matrix[4,2] <- blade_base_cor
-        cor_matrix[3,4] <- cor_matrix[4,3] <- shoulder_base_cor
-        
-        # Plot correlation matrix
-        image(1:4, 1:4, cor_matrix, axes = FALSE, 
-              col = colorRampPalette(c("blue", "white", "red"))(100),
-              main = "Region Correlations",
-              xlab = "", ylab = "")
-        axis(1, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
-        axis(2, at = 1:4, labels = c("Tip", "Blade", "Shoulder", "Base"))
-        
-        # Add correlation values
-        for (i in 1:4) {
-          for (j in 1:4) {
-            text(i, j, round(cor_matrix[i,j], 2), col = "black")
-          }
-        }
-      }
-      
-      dev.off()
-    }
+  rv <- reactiveValues(
+    idx = 1L,
+    state = list(),          # per image: crop, scale (2 x 2), scale_mm, tip, base
+    specimens = list(),      # saved specimens, named by id
+    shared_ppm = NULL,       # shared scale in ORIGINAL pixels per mm
+    last_saved = ""
   )
+
+  notify <- function(msg, type = "message") showNotification(msg, type = type, duration = 6)
+  plural <- function(n) if (n == 1) "" else "s"
+
+  # ---- images ---------------------------------------------------------------
+  image_files <- reactive({
+    if (identical(input$image_source, "upload")) {
+      if (is.null(input$images)) return(data.frame(name = character(0), path = character(0)))
+      data.frame(name = input$images$name, path = input$images$datapath, stringsAsFactors = FALSE)
+    } else {
+      f <- list.files(DEMO_DIR, pattern = IMAGE_PATTERN, full.names = TRUE)
+      data.frame(name = basename(f), path = f, stringsAsFactors = FALSE)
+    }
+  })
+  observeEvent(image_files(), { rv$idx <- 1L })
+  output$image_count <- renderText({
+    n <- nrow(image_files())
+    if (n == 0) "No images yet. Upload one or more images." else sprintf("%d image%s ready.", n, plural(n))
+  })
+  observeEvent(input$go_outline, nav_select("nav", "outline"))
+  observeEvent(input$go_results, nav_select("nav", "results"))
+
+  current_id <- reactive({
+    f <- image_files()
+    if (nrow(f) == 0) return(NULL)
+    f$name[min(rv$idx, nrow(f))]
+  })
+  current_image <- reactive({
+    f <- image_files()
+    req(nrow(f) > 0)
+    path <- f$path[min(rv$idx, nrow(f))]
+    tryCatch(load_working_image(path), error = function(e) {
+      notify(paste("This image could not be read:", conditionMessage(e)), "error")
+      NULL
+    })
+  })
+  state <- reactive({
+    id <- current_id()
+    if (is.null(id)) return(list())
+    s <- rv$state[[id]]
+    if (is.null(s)) list() else s
+  })
+  set_state <- function(field, value) {
+    id <- isolate(current_id())
+    if (is.null(id)) return()
+    s <- isolate(rv$state[[id]])
+    if (is.null(s)) s <- list()
+    s[field] <- list(value)
+    rv$state[[id]] <- s
+  }
+
+  step_image <- function(by) {
+    n <- nrow(image_files())
+    if (n > 0) rv$idx <- min(max(rv$idx + by, 1L), n)
+  }
+  observeEvent(input$prev_img, step_image(-1L))
+  observeEvent(input$next_img, step_image(1L))
+  output$image_title <- renderText({
+    f <- image_files()
+    if (nrow(f) == 0) return("No images. Go to step 1.")
+    sprintf("Image %d of %d: %s", min(rv$idx, nrow(f)), nrow(f), current_id())
+  })
+  observeEvent(current_id(), {
+    id <- current_id()
+    saved <- rv$specimens[[id]]
+    updateTextInput(session, "spec_name", value = if (is.null(saved)) tools::file_path_sans_ext(id) else saved$name)
+    if (!is.null(saved)) updateTextInput(session, "spec_group", value = saved$group)
+  })
+
+  # ---- interaction with the image ------------------------------------------
+  inside <- function(p, img) p[1] >= 0 && p[1] <= img$width && p[2] >= 0 && p[2] <= img$height
+
+  observeEvent(input$img_brush, {
+    b <- input$img_brush
+    img <- current_image()
+    if (!is.null(b) && !is.null(img) && identical(input$mode, "crop")) {
+      crop <- c(max(0, b$xmin), min(img$width, b$xmax), max(0, b$ymin), min(img$height, b$ymax))
+      if (crop[2] - crop[1] >= 20 && crop[4] - crop[3] >= 20) {
+        set_state("crop", crop)
+        set_state("tip", NULL); set_state("base", NULL)
+      }
+    }
+    session$resetBrush("img_brush")
+  })
+  observeEvent(input$img_click, {
+    img <- current_image()
+    p <- c(input$img_click$x, input$img_click$y)
+    if (is.null(img) || length(p) != 2 || !inside(p, img)) return()
+    if (identical(input$mode, "scale")) {
+      sc <- state()$scale
+      set_state("scale", if (is.null(sc) || nrow(sc) >= 2) matrix(p, 1) else rbind(sc, p))
+      set_state("scale_mm", input$scale_mm)
+    } else if (identical(input$mode, "landmarks")) {
+      s <- state()
+      if (is.null(s$tip) || !is.null(s$base)) { set_state("tip", p); set_state("base", NULL) }
+      else set_state("base", p)
+    }
+  })
+  observeEvent(input$scale_mm, {
+    if (!is.null(isolate(state()$scale))) set_state("scale_mm", input$scale_mm)
+  }, ignoreInit = TRUE)
+  observeEvent(input$clear_crop, { set_state("crop", NULL); set_state("tip", NULL); set_state("base", NULL) })
+  observeEvent(input$clear_landmarks, { set_state("tip", NULL); set_state("base", NULL) })
+  observeEvent(input$clear_scale, set_state("scale", NULL))
+
+  # Scale of the current image in working pixels per mm, from its own clicks.
+  own_ppm <- reactive({
+    s <- state()
+    mm <- s$scale_mm
+    if (is.null(s$scale) || nrow(s$scale) < 2 || is.null(mm) || !is.finite(mm) || mm <= 0) return(NA_real_)
+    d <- sqrt(sum((s$scale[1, ] - s$scale[2, ])^2))
+    if (d < 2) NA_real_ else d / mm
+  })
+  # The shared scale is kept in original pixels so it transfers between images
+  # that were resized by different factors.
+  observeEvent(own_ppm(), {
+    img <- current_image()
+    if (is.finite(own_ppm()) && !is.null(img)) rv$shared_ppm <- ppm_to_original(own_ppm(), img$factor)
+  })
+  current_ppm <- reactive({
+    if (is.finite(own_ppm())) return(own_ppm())
+    img <- current_image()
+    if (isTRUE(input$scale_all) && !is.null(rv$shared_ppm) && !is.null(img)) return(ppm_to_working(rv$shared_ppm, img$factor))
+    NA_real_
+  })
+  output$scale_text <- renderText({
+    s <- state()
+    if (is.finite(own_ppm())) sprintf("Scale for this image: %.2f pixels per mm.", own_ppm())
+    else if (!is.null(s$scale) && nrow(s$scale) == 1) "One point set. Click the other end of the known distance."
+    else if (is.finite(current_ppm())) sprintf("Using the shared scale: %.2f pixels per mm.", current_ppm())
+    else "No scale set. Measurements will be in pixels."
+  })
+
+  # ---- processing (preview only; nothing here changes a saved specimen) -----
+  settings <- debounce(reactive({
+    list(auto = isTRUE(input$auto_threshold), threshold = input$threshold, polarity = input$polarity,
+         speck = input$speck, direction = input$direction)
+  }), 250)
+
+  processed <- reactive({
+    img <- current_image()
+    req(img)
+    s <- state(); st <- settings()
+    both <- !is.null(s$tip) && !is.null(s$base)
+    process_image(img, crop = s$crop, threshold = if (st$auto) NULL else st$threshold,
+                  polarity = st$polarity, speck_side = st$speck, direction = st$direction,
+                  tip = if (both) s$tip else NULL, base = if (both) s$base else NULL)
+  })
+  observeEvent(processed(), {
+    p <- processed()
+    if (isTRUE(input$auto_threshold) && !is.null(p$threshold))
+      updateSliderInput(session, "threshold", value = round(p$threshold, 2))
+  })
+
+  output$outline_warnings <- renderUI({
+    if (nrow(image_files()) == 0)
+      return(div(class = "warn-box", "No images are loaded. Go to step 1 to choose images."))
+    p <- processed()
+    s <- state()
+    msgs <- p$warnings
+    if (!is.null(s$tip) && is.null(s$base)) msgs <- c(msgs, "Tip set. Now click the base to finish placing the landmarks.")
+    if (length(msgs) == 0) return(NULL)
+    tagList(lapply(msgs, function(m) div(class = "warn-box", m)))
+  })
+
+  output$image_plot <- renderPlot({
+    img <- current_image()
+    req(img)
+    p <- processed(); s <- state()
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, img$width), ylim = c(img$height, 0), asp = 1, xaxs = "i", yaxs = "i",
+         axes = FALSE, xlab = "", ylab = "")
+    rasterImage(img$raster, 0, img$height, img$width, 0, interpolate = FALSE)
+    if (!is.null(s$crop)) rect(s$crop[1], s$crop[4], s$crop[2], s$crop[3], border = "#F0E442", lty = 2, lwd = 2)
+    if (!is.null(p$outline_plot)) polygon(p$outline_plot, border = "#D55E00", lwd = 2.5)
+    if (isTRUE(p$ok)) {
+      pts <- rbind(p$tip_plot, p$base_plot)
+      points(pts, pch = 4, cex = 2.2, lwd = 3, col = "#56B4E9")
+      text(pts, labels = c("tip", "base"), pos = 3, col = "#56B4E9", font = 2, cex = 1.1)
+    } else if (!is.null(s$tip)) points(s$tip[1], s$tip[2], pch = 4, cex = 2.2, lwd = 3, col = "#56B4E9")
+    if (!is.null(s$scale)) {
+      points(s$scale, pch = 3, cex = 2, lwd = 3, col = "#009E73")
+      if (nrow(s$scale) == 2) lines(s$scale, col = "#009E73", lwd = 3)
+    }
+  })
+
+  output$std_plot <- renderPlot({
+    p <- processed()
+    validate(need(isTRUE(p$ok), "No outline to show yet."))
+    reg <- assign_regions(point_positions(), boundaries())
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(p$std$outline, type = "n", asp = 1, axes = FALSE, xlab = "", ylab = "")
+    polygon(p$std$outline, col = "grey93", border = "grey50")
+    points(p$std$points, pch = 19, cex = 0.6, col = REGION_COLOURS[as.character(reg)])
+    points(rbind(p$std$tip, p$std$base), pch = 4, cex = 2, lwd = 3)
+  })
+
+  # ---- specimens ------------------------------------------------------------
+  add_specimen <- function(id, name, group, p, ppm) {
+    others <- rv$specimens[setdiff(names(rv$specimens), id)]
+    rv$specimens[[id]] <- new_specimen(id, unique_specimen_name(name, others), trimws(group),
+                                       p$std$outline, p$std$base_row, ppm, p$settings)
+  }
+  observeEvent(input$save_spec, {
+    id <- current_id()
+    p <- if (is.null(id)) NULL else processed()
+    if (is.null(id) || !isTRUE(p$ok)) {
+      notify("There is no usable outline to save for this image. Read the message above the image.", "error")
+      return()
+    }
+    replaced <- !is.null(rv$specimens[[id]])
+    add_specimen(id, input$spec_name, input$spec_group, p, current_ppm())
+    n <- length(rv$specimens)
+    rv$last_saved <- sprintf("%s %s. %d specimen%s saved in total.", if (replaced) "Replaced" else "Saved",
+                             rv$specimens[[id]]$name, n, plural(n))
+    if (rv$idx < nrow(image_files())) rv$idx <- rv$idx + 1L
+    else notify("That was the last image. Continue to step 3 to review the specimens.")
+  })
+  output$saved_text <- renderText(rv$last_saved)
+
+  observeEvent(input$run_demo, {
+    f <- list.files(DEMO_DIR, pattern = IMAGE_PATTERN, full.names = TRUE)
+    if (length(f) == 0) { notify("The sample images are missing.", "error"); return() }
+    withProgress(message = "Processing sample images", value = 0, {
+      for (path in f) {
+        p <- process_image(load_working_image(path), direction = DEMO_DIRECTION)
+        id <- basename(path)
+        if (isTRUE(p$ok)) add_specimen(id, tools::file_path_sans_ext(id), "", p, NA_real_)
+        incProgress(1 / length(f))
+      }
+    })
+    updateRadioButtons(session, "image_source", selected = "demo")
+    nav_select("nav", "results")
+  })
+
+  observe({
+    ids <- names(rv$specimens)
+    nm <- vapply(unname(rv$specimens), function(s) s$name, character(1))
+    ch <- if (length(ids)) stats::setNames(ids, nm) else character(0)
+    updateSelectInput(session, "edit_which", choices = ch, selected = isolate(input$edit_which))
+    updateSelectInput(session, "recon_which", choices = unname(nm), selected = isolate(input$recon_which))
+  })
+  observeEvent(input$edit_which, {
+    s <- rv$specimens[[input$edit_which]]
+    req(s)
+    updateTextInput(session, "edit_name", value = s$name)
+    updateTextInput(session, "edit_group", value = s$group)
+  })
+  observeEvent(input$edit_apply, {
+    id <- input$edit_which
+    req(id, rv$specimens[[id]])
+    rv$specimens[[id]]$name <- unique_specimen_name(input$edit_name, rv$specimens[setdiff(names(rv$specimens), id)])
+    rv$specimens[[id]]$group <- trimws(input$edit_group)
+  })
+  observeEvent(input$edit_remove, {
+    id <- input$edit_which
+    req(id)
+    rv$specimens[[id]] <- NULL
+  })
+  observeEvent(input$load_outlines, {
+    loaded <- tryCatch(specimens_from_csv(input$load_outlines$datapath), error = function(e) e)
+    if (inherits(loaded, "error")) { notify(conditionMessage(loaded), "error"); return() }
+    rv$specimens <- merge_specimens(rv$specimens, loaded)
+    notify(sprintf("Loaded %d specimen%s.", length(loaded), plural(length(loaded))))
+  })
+
+  specimens <- reactive({
+    s <- rv$specimens
+    stats::setNames(s, vapply(unname(s), function(z) z$name, character(1)))
+  })
+  n_spec <- reactive(length(specimens()))
+  groups <- reactive(vapply(specimens(), function(s) s$group, character(1)))
+  measurements <- reactive(specimen_measurements(specimens()))
+
+  measurement_table <- function(m) {
+    any_mm <- any(is.finite(m$length_mm)); all_mm <- all(is.finite(m$length_mm))
+    out <- data.frame(Specimen = m$specimen, Group = m$group, check.names = FALSE, stringsAsFactors = FALSE)
+    if (any_mm) {
+      out[["Length (mm)"]] <- m$length_mm; out[["Width (mm)"]] <- m$width_mm; out[["Area (mm2)"]] <- m$area_mm2
+    }
+    if (!all_mm) { out[["Length (px)"]] <- m$length_px; out[["Width (px)"]] <- m$width_px }
+    out[["Length / width"]] <- m$length_width_ratio
+    out[["Widest at (fraction of length above base)"]] <- m$widest_position
+    out[["Asymmetry"]] <- m$asymmetry
+    out
+  }
+  output$spec_grid <- renderPlot({
+    validate(need(n_spec() > 0, "No specimens saved yet. Save outlines in step 2, or load an outline file."))
+    plot_outline_grid(lapply(specimens(), function(s) s$outline), groups())
+  })
+  output$spec_table <- renderTable({
+    req(n_spec() > 0)
+    measurement_table(measurements())
+  }, digits = 3, na = "")
+
+  # ---- analysis (settings here never alter a saved specimen) ----------------
+  need_n <- function(n, what) {
+    validate(need(n_spec() >= n, sprintf("%s needs at least %d specimens. You have %d.", what, n, n_spec())))
+  }
+  need_pca <- function(min_rank = 1L) {
+    need_n(3, "Principal component analysis")
+    validate(need(pca()$rank >= 1L, "The saved outlines are identical in shape, so there is no shape variation to analyse."),
+             need(pca()$rank >= min_rank, sprintf("This result needs at least %d components of shape variation. These specimens have %d.", min_rank, pca()$rank)))
+  }
+  boundaries <- reactive(sort(c(input$b_tip, input$b_blade, input$b_shoulder)) / 100)
+  shapes <- reactive({
+    pts <- lapply(specimens(), function(s) s$points)
+    if (isTRUE(input$symmetrize)) lapply(pts, symmetrize_shape, pair = mirror_index()) else pts
+  })
+  aligned <- reactive({ req(n_spec() >= 2); gpa(shapes()) })
+  power <- reactive(harmonic_power(efa_matrix(aligned()$aligned, MAX_HARMONICS)))
+  n_harm <- reactive({
+    if (isTRUE(input$auto_harmonics)) return(choose_harmonics(power()))
+    h <- suppressWarnings(as.integer(input$n_harmonics))
+    if (is.na(h)) h <- 12L
+    min(max(h, 2L), MAX_HARMONICS)
+  })
+  coefs <- reactive(efa_matrix(aligned()$aligned, n_harm()))
+  pca <- reactive({ req(n_spec() >= 3); shape_pca(coefs()) })
+  tree <- reactive({ req(n_spec() >= 4); shape_clusters(coefs()) })
+  k_used <- reactive({
+    k <- suppressWarnings(as.integer(input$k))
+    if (length(k) == 0 || is.na(k)) k <- 2L
+    min(max(k, 2L), n_spec() - 1L)
+  })
+  clusters <- reactive(stats::cutree(tree(), k_used()))
+  sil <- reactive(silhouette_by_k(coefs(), tree()))
+  regions <- reactive(assign_regions(point_positions(), boundaries()))
+  pvar <- reactive(point_variance(aligned()$aligned))
+  region_var <- reactive(tapply(pvar(), regions(), mean))
+  rv_table <- reactive({
+    req(n_spec() >= 4, nlevels(droplevels(regions())) >= 2)
+    region_rv(aligned()$aligned, regions())
+  })
+  stability <- reactive({ req(n_spec() >= 4); pca_stability(coefs()) })
+  colouring <- reactive({
+    if (identical(input$colour_by, "group") && any(nzchar(groups()))) list(values = groups(), name = "Group")
+    else if (identical(input$colour_by, "cluster") && n_spec() >= 4) list(values = as.character(clusters()), name = "Cluster")
+    else list(values = NULL, name = NULL)
+  })
+
+  output$n_text <- renderText(sprintf("%d specimen%s in the analysis.", n_spec(), plural(n_spec())))
+
+  figures <- list(
+    stack = reactive({ need_n(2, "The overlay"); plot_outline_stack(aligned()$aligned, aligned()$mean, groups()) }),
+    meas = reactive({ need_n(1, "The measurement plot"); plot_measurements(measurements(), groups()) }),
+    power = reactive({ need_n(2, "Harmonic analysis"); plot_harmonic_power(power(), n_harm()) }),
+    recon = reactive({
+      need_n(2, "Harmonic analysis")
+      al <- aligned()$aligned
+      which <- if (!is.null(input$recon_which) && input$recon_which %in% names(al)) input$recon_which else names(al)[1]
+      plot_reconstruction(al[[which]], c(1, 2, 4, 8, n_harm()))
+    }),
+    morpho = reactive({ need_pca(2L); plot_morphospace(pca(), colouring()$values, colouring()$name) }),
+    scree = reactive({ need_pca(1L); plot_scree(pca()) }),
+    stab = reactive({
+      need_n(4, "The leave-one-out check"); need_pca(2L)
+      plot_stability(stability())
+    }),
+    pcs = reactive({ need_pca(1L); plot_pc_shapes(pca()) }),
+    dend = reactive({ need_n(4, "Clustering"); plot_dendrogram(tree(), k_used()) }),
+    sil = reactive({ need_n(4, "Clustering"); plot_silhouette(sil(), k_used()) }),
+    regions = reactive({ need_n(2, "Region analysis"); plot_regions(aligned()$mean, regions()) }),
+    pvar = reactive({ need_n(2, "Region analysis"); plot_point_variance(aligned()$mean, pvar()) }),
+    rvar = reactive({ need_n(2, "Region analysis"); plot_region_variance(region_var()) }),
+    rv = reactive({
+      need_n(4, "Covariation between regions")
+      validate(need(any(is.finite(rv_table()$rv)), "Covariation between regions is not available because at least one region does not vary between these specimens."))
+      plot_region_rv(rv_table())
+    })
+  )
+  texts <- list(
+    outlines = reactive({ req(n_spec() >= 2); text_outlines(n_spec(), isTRUE(input$symmetrize)) }),
+    meas = reactive({ req(n_spec() >= 1); text_measurements(measurements()) }),
+    harm = reactive({ req(n_spec() >= 2); text_harmonics(power(), n_harm(), isTRUE(input$auto_harmonics)) }),
+    pca = reactive({ req(n_spec() >= 3, pca()$rank >= 2L); text_pca(pca(), n_spec()) }),
+    stab = reactive({ req(n_spec() >= 4, !is.null(stability())); text_stability(stability()) }),
+    pcs = reactive({ req(n_spec() >= 3, pca()$rank >= 1L); text_pc_shapes(pca()) }),
+    clust = reactive({ req(n_spec() >= 4); text_clusters(tree(), k_used(), sil(), groups()) }),
+    regions = reactive({
+      req(n_spec() >= 2)
+      text_regions(region_var(), if (n_spec() >= 4) rv_table() else NULL, n_spec(), boundaries())
+    })
+  )
+
+  output$stack_plot <- renderPlot(figures$stack())
+  output$meas_plot <- renderPlot(figures$meas())
+  output$power_plot <- renderPlot(figures$power())
+  output$recon_plot <- renderPlot(figures$recon())
+  output$morpho_plot <- renderPlot(figures$morpho())
+  output$scree_plot <- renderPlot(figures$scree())
+  output$stab_plot <- renderPlot(figures$stab())
+  output$pcs_plot <- renderPlot(figures$pcs())
+  output$dend_plot <- renderPlot(figures$dend())
+  output$sil_plot <- renderPlot(figures$sil())
+  output$regions_plot <- renderPlot(figures$regions())
+  output$pvar_plot <- renderPlot(figures$pvar())
+  output$rvar_plot <- renderPlot(figures$rvar())
+  output$rv_plot <- renderPlot(figures$rv())
+
+  output$outlines_text <- renderUI(paragraphs(texts$outlines()))
+  output$meas_text <- renderUI(paragraphs(texts$meas()))
+  output$harm_text <- renderUI(paragraphs(texts$harm()))
+  output$pca_text <- renderUI(paragraphs(texts$pca()))
+  output$stab_text <- renderUI(paragraphs(texts$stab()))
+  output$pcs_text <- renderUI(paragraphs(texts$pcs()))
+  output$clust_text <- renderUI(paragraphs(texts$clust()))
+  output$regions_text <- renderUI(paragraphs(texts$regions()))
+
+  output$meas_table <- renderTable({ req(n_spec() > 0); measurement_table(measurements()) }, digits = 3, na = "")
+  output$cross_table <- renderTable({
+    need_n(4, "Clustering")
+    validate(need(any(nzchar(groups())), "Enter group labels in step 3 to compare them with the clusters."))
+    g <- ifelse(nzchar(groups()), groups(), "(no label)")
+    tab <- as.data.frame.matrix(table(Cluster = clusters(), Group = g))
+    cbind(Cluster = rownames(tab), tab)
+  })
+
+  # ---- downloads ------------------------------------------------------------
+  stamp <- function(prefix, ext) function() sprintf("%s_%s.%s", prefix, format(Sys.time(), "%Y%m%d-%H%M%S"), ext)
+  empty_csv <- function(file) utils::write.csv(data.frame(message = "No results are available yet."), file, row.names = FALSE)
+
+  output$dl_outlines <- downloadHandler(stamp("biface_outlines", "csv"), function(file) {
+    if (n_spec() == 0) empty_csv(file) else utils::write.csv(specimens_to_csv(rv$specimens), file, row.names = FALSE)
+  })
+  output$dl_meas <- downloadHandler(stamp("biface_measurements", "csv"), function(file) {
+    if (n_spec() == 0) empty_csv(file) else utils::write.csv(measurements(), file, row.names = FALSE)
+  })
+  output$dl_scores <- downloadHandler(stamp("biface_pc_scores", "csv"), function(file) {
+    if (n_spec() < 3 || pca()$rank < 1L) return(empty_csv(file))
+    out <- data.frame(specimen = rownames(pca()$scores), group = groups(), stringsAsFactors = FALSE)
+    if (n_spec() >= 4) out$cluster <- clusters()
+    utils::write.csv(cbind(out, pca()$scores), file, row.names = FALSE)
+  })
+  output$dl_coef <- downloadHandler(stamp("biface_fourier_coefficients", "csv"), function(file) {
+    if (n_spec() < 2) return(empty_csv(file))
+    utils::write.csv(cbind(data.frame(specimen = rownames(coefs()), stringsAsFactors = FALSE), coefs()), file, row.names = FALSE)
+  })
+
+  # A figure or text that is unavailable (too few specimens) is left out.
+  available <- function(expr) tryCatch(expr, error = function(e) NULL)
+  specimen_line <- function(s) {
+    st <- s$settings
+    scale <- if (is.finite(s$px_per_mm)) sprintf("%.2f px per mm", s$px_per_mm) else "no scale"
+    if (is.null(st$threshold)) return(sprintf("%s: processing settings not recorded, %s.", s$name, scale))
+    sprintf("%s: threshold %.2f, artifact %s than background, speck removal %d px, tip %s, %s, %s, %s.",
+            s$name, st$threshold, if (identical(st$polarity, "light")) "lighter" else "darker",
+            as.integer(st$speck), st$direction,
+            if (isTRUE(st$manual_landmarks)) "tip and base set by hand" else "automatic tip and base",
+            if (isTRUE(st$cropped)) "cropped" else "whole image", scale)
+  }
+  output$dl_report <- downloadHandler(stamp("biface_report", "pdf"), function(file) {
+    n <- n_spec()
+    cover <- sprintf("Generated %s. %d specimen%s.", format(Sys.time(), "%Y-%m-%d %H:%M"), n, plural(n))
+    sections <- list()
+    if (n == 0) {
+      cover <- c(cover, "No specimens have been saved, so there are no results to report.")
+    } else {
+      cover <- c(cover,
+                 sprintf("Settings: %s; %s; region boundaries at %s of edge length from the tip.",
+                         if (n >= 2) sprintf("%d harmonics (%s)", n_harm(), if (isTRUE(input$auto_harmonics)) "automatic" else "set by hand") else "harmonics not applicable",
+                         if (isTRUE(input$symmetrize)) "symmetric shapes" else "shapes as photographed",
+                         paste(fmt_pct(boundaries()), collapse = ", ")),
+                 "Processing of each specimen:",
+                 vapply(specimens(), specimen_line, character(1)),
+                 sprintf("Software: R %s, shiny %s, imager %s, ggplot2 %s.", getRversion(), utils::packageVersion("shiny"),
+                         utils::packageVersion("imager"), utils::packageVersion("ggplot2")),
+                 "Methods are described on the Help page of the app.")
+      add <- function(heading, fig, txt = NULL) {
+        p <- available(figures[[fig]]())
+        if (is.null(p)) return()
+        tx <- if (is.null(txt)) NULL else available(texts[[txt]]())
+        sections[[length(sections) + 1L]] <<- list(heading = heading, plot = p, text = if (is.null(tx)) character(0) else tx)
+      }
+      sections[[1]] <- list(heading = "Specimens", text = character(0),
+                            plot = plot_outline_grid(lapply(specimens(), function(s) s$outline), groups()))
+      add("Aligned outlines", "stack", "outlines")
+      add("Measurements", "meas", "meas")
+      add("Harmonic power", "power", "harm")
+      add("Reconstruction from harmonics", "recon")
+      add("Principal components", "morpho", "pca")
+      add("Share of variance by component", "scree")
+      add("Dependence of the components on single specimens", "stab", "stab")
+      add("Shape change along components", "pcs", "pcs")
+      add("Clusters", "dend", "clust")
+      add("Silhouette width by number of clusters", "sil")
+      add("Regions", "regions", "regions")
+      add("Variance at each point", "pvar")
+      add("Variance by region", "rvar")
+      add("Covariation between regions", "rv")
+    }
+    write_report(file, cover, sections)
+  })
 }
 
 shinyApp(ui, server)

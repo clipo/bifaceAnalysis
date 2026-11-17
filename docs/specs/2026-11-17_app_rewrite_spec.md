@@ -588,3 +588,17 @@ original pixels (6.1, 6.4). F8: state separation, CSV schema, symmetrization
 (6.5, 7.1). F9: RV formula, reference relabelled, justification changed (7.6).
 F10: silhouette specified, dependency sets listed (5, 7.5). F11: tolerances and
 content checks (10). F12: D11 reworded (2).
+
+Build notes, 2026-11-17 (differences between the build and revision 2).
+(a) Section 10, synthetic disc test: the mask does not equal the filled disc
+exactly. Speck removal with a 3-pixel element removes the single cell at each
+of the four extremes of a rasterized disc. The test requires that the mask
+lies within the disc, omits at most 4 cells, and has the hole filled.
+(b) Section 10, spacing test: spacing within an edge is constant in distance
+along the edge, not in straight-line distance between points, which changes at
+corners of a polygon. The test measures each point's position along its edge
+independently of the resampling function and requires equal steps within 1e-8.
+(c) The manual browser checklist was not completed during the build. Chrome
+could not load the app from the local server. Clicks, the crop box, and scale
+transfer are covered at the server level by `tests/testthat/test-server.R`;
+pointer behaviour and layout in a browser remain unchecked.
