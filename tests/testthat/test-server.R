@@ -139,7 +139,8 @@ test_that("crop, scale, and landmark interactions update the preview only", {
     img <- current_image()
     auto <- processed()
     expect_true(auto$ok)
-    expect_true(is.list(output$image_plot)); expect_true(is.list(output$std_plot))
+    expect_true(is.list(output$image_plot)); expect_true(is.list(output$std_plot)); expect_true(is.list(output$mask_plot))
+    expect_identical(dim(auto$mask), c(img$width, img$height))
 
     # Crop: a box around the artifact keeps the outline; the crop is recorded.
     bb <- apply(auto$outline_plot, 2, range)
@@ -196,5 +197,139 @@ test_that("crop, scale, and landmark interactions update the preview only", {
     session$setInputs(threshold = 0.98); session$elapse(300)
     expect_false(is.null(processed()$warnings))                                       # no error at an extreme threshold
     expect_identical(n_spec(), 1L)                                                    # none of this altered the saved specimen
+  })
+})
+
+upload_input <- function(files) data.frame(name = names(files), size = file.size(files), type = "image/jpeg", datapath = unname(files), stringsAsFactors = FALSE)
+figure_message <- function(r) tryCatch({ r(); "" }, error = function(e) conditionMessage(e))
+
+test_that("Clear scale removes the effective scale of the image and leaves the shared scale for others", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$elapse(300)
+    session$setInputs(mode = "scale", scale_mm = 10, scale_all = TRUE, img_click = list(x = 10, y = 30))
+    session$setInputs(img_click = list(x = 110, y = 30))
+    expect_equal(current_ppm(), 10)
+    session$setInputs(clear_scale = 1)
+    expect_true(is.na(own_ppm())); expect_true(is.na(current_ppm()))
+    expect_match(output$scale_text, "Scale cleared for this image")
+    session$setInputs(spec_name = "unscaled", save_spec = 1)
+    expect_true(is.na(rv$specimens[["artifact1.jpg"]]$px_per_mm))
+    expect_true(is.na(measurements()$length_mm))
+    session$elapse(300)
+    expect_identical(current_id(), "artifact2.jpg")
+    expect_equal(current_ppm(), 10 * current_image()$factor)             # the shared scale still serves other images
+    session$setInputs(prev_img = 1); session$elapse(300)
+    expect_true(is.na(current_ppm()))                                    # and stays off for the cleared image
+    session$setInputs(img_click = list(x = 10, y = 40)); session$setInputs(img_click = list(x = 60, y = 40))
+    expect_equal(current_ppm(), 5)                                       # until a new scale is clicked on it
+  })
+})
+
+test_that("an uploaded file never inherits the state or the specimen of an image with the same name", {
+  up <- file.path(tempfile("up"), "artifact1.jpg"); dir.create(dirname(up))
+  file.copy(DEMO_FILES[["artifact4"]], up)                               # different contents under a repeated name
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$elapse(300)
+    session$setInputs(mode = "crop", img_brush = list(xmin = 0, xmax = 240, ymin = 70, ymax = 170))
+    session$setInputs(spec_name = "demo one", save_spec = 1)
+    demo_outline <- rv$specimens[["artifact1.jpg"]]$outline
+    session$setInputs(images = upload_input(c(artifact1.jpg = up)), image_source = "upload")
+    session$elapse(300)
+    expect_identical(current_id(), "upload1/artifact1.jpg"); expect_identical(current_name(), "artifact1.jpg")
+    expect_length(state(), 0L)                                           # no crop, scale, or landmarks carried over
+    expect_true(processed()$ok); expect_false(processed()$settings$cropped)
+    session$setInputs(img_brush = list(xmin = 2, xmax = 132, ymin = 60, ymax = 180))
+    expect_false(is.null(state()$crop))
+    session$setInputs(spec_name = "demo one", save_spec = 1)
+    expect_identical(n_spec(), 2L)
+    expect_identical(rv$specimens[["artifact1.jpg"]]$outline, demo_outline)   # the earlier specimen is untouched
+    expect_identical(unname(vapply(rv$specimens, function(s) s$name, character(1))), c("demo one", "demo one (2)"))
+    session$setInputs(images = upload_input(c(artifact1.jpg = up)))      # the same file uploaded again
+    session$elapse(300)
+    expect_identical(current_id(), "upload2/artifact1.jpg"); expect_length(state(), 0L)
+    session$setInputs(image_source = "demo"); session$elapse(300)
+    expect_identical(current_id(), "artifact1.jpg")
+    expect_equal(state()$crop, c(0, 240, 70, 170))                       # the sample image keeps its own state
+  })
+})
+
+test_that("an invalid pair of landmark clicks keeps the previous landmarks", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$elapse(300)
+    auto <- processed()
+    session$setInputs(mode = "landmarks", img_click = list(x = auto$base_plot[1], y = auto$base_plot[2]))
+    expect_false(is.null(state()$pending_tip)); expect_false(processed()$settings$manual_landmarks)
+    session$setInputs(img_click = list(x = auto$tip_plot[1], y = auto$tip_plot[2])); session$elapse(300)
+    valid <- processed()
+    expect_true(valid$ok); expect_true(valid$settings$manual_landmarks); expect_null(state()$pending_tip)
+    v <- valid$outline_plot[40, ]
+    session$setInputs(img_click = list(x = v[1] + 0.2, y = v[2])); session$setInputs(img_click = list(x = v[1], y = v[2] + 0.2))
+    session$elapse(300)
+    after <- processed()
+    expect_true(after$ok); expect_null(state()$pending_tip)
+    expect_equal(after$tip_plot, valid$tip_plot); expect_equal(after$std$points, valid$std$points)
+    session$setInputs(spec_name = "kept", save_spec = 1)
+    expect_identical(n_spec(), 1L); expect_true(rv$specimens[[1]]$settings$manual_landmarks)
+  })
+})
+
+test_that("identical shapes give no components at 2, 3, and 5 specimens", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    p <- process_image(load_working_image(file.path("www", "artifact1.jpg")), direction = "left")
+    for (i in 1:5) {
+      rv$specimens[[paste0("copy", i)]] <- new_specimen(paste0("copy", i), paste0("copy", i), "", p$std$outline, p$std$base_row)
+      if (i < 2) next
+      for (f in names(figures)) expect_false(grepl("^ERROR", try_figure(figures[[f]])), info = paste(i, f))
+      if (i >= 3) {
+        expect_identical(pca()$rank, 0L, info = i)
+        for (f in c("morpho", "scree", "pcs")) expect_match(figure_message(figures[[f]]), "identical in shape", info = paste(i, f))
+        expect_identical(names(read.csv(output$dl_scores)), "message")
+      }
+      if (i >= 4) expect_match(texts$clust()[2], "no dashed line")
+      expect_identical(readBin(output$dl_report, "raw", 4), charToRaw("%PDF"))
+    }
+  })
+})
+
+test_that("equal region boundaries withhold the region results with a message", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$setInputs(run_demo = 1)
+    session$setInputs(b_tip = 60, b_blade = 60, b_shoulder = 80)
+    expect_false(boundaries_ok())
+    for (f in c("regions", "rvar", "rv")) expect_match(figure_message(figures[[f]]), "Two region boundaries are equal", info = f)
+    expect_identical(try_text(texts$regions), "message")
+    expect_identical(try_figure(figures$pvar), "plot"); expect_identical(try_figure(figures$morpho), "plot")
+    expect_identical(readBin(output$dl_report, "raw", 4), charToRaw("%PDF"))
+    session$setInputs(b_blade = 65)
+    expect_true(boundaries_ok()); expect_identical(try_figure(figures$rv), "plot")
+  })
+})
+
+test_that("figures that need more specimens say how many, and the outline file has one row per vertex", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    for (f in setdiff(names(figures), character(0))) expect_match(figure_message(figures[[f]]), "needs at least [0-9] specimens\\. You have 0\\.", info = f)
+    session$setInputs(run_demo = 1)
+    outl <- read.csv(output$dl_outlines)
+    expect_identical(nrow(outl), sum(vapply(rv$specimens, function(s) nrow(s$outline), integer(1))))
+    expect_identical(as.integer(table(outl$id)[names(rv$specimens)]), unname(vapply(rv$specimens, function(s) nrow(s$outline), integer(1))))
+    # A rejected file leaves the store unchanged.
+    before <- rv$specimens
+    bad <- outl; bad$x[3] <- Inf
+    f <- tempfile(fileext = ".csv"); write.csv(bad, f, row.names = FALSE)
+    session$setInputs(load_outlines = data.frame(name = "bad.csv", datapath = f, stringsAsFactors = FALSE))
+    expect_identical(rv$specimens, before)
+    # A loaded record replaces the fields shown for the selected specimen.
+    session$setInputs(edit_which = "artifact2.jpg")
+    good <- outl; good$specimen[good$id == "artifact2.jpg"] <- "from file"; good$group[good$id == "artifact2.jpg"] <- "G"
+    write.csv(good, f, row.names = FALSE)
+    session$setInputs(load_outlines = data.frame(name = "good.csv", datapath = f, stringsAsFactors = FALSE))
+    expect_identical(n_spec(), 4L)
+    expect_identical(edited()$name, "from file"); expect_identical(edited()$group, "G")
   })
 })

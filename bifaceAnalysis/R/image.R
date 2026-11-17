@@ -100,8 +100,7 @@ segment_image <- function(gray, threshold = NULL, polarity = c("auto", "light", 
       if (nrow(tab) == 0L) next
       i <- which.max(tab$area)
       if (is.null(best) || tab$area[i] > best$area) {
-        best <- list(area = tab$area[i], label = tab$label[i], cand = cand, interior = interior_only,
-                     n_other = sum(tab$area >= 0.25 * tab$area[i]) - 1L)
+        best <- list(area = tab$area[i], label = tab$label[i], cand = cand, interior = interior_only)
       }
     }
     if (!is.null(best)) break
@@ -117,6 +116,20 @@ segment_image <- function(gray, threshold = NULL, polarity = c("auto", "light", 
   open_ids <- outside$table$label[outside$table$touches_border]
   mask <- mask | (!mask & !(outside$lab %in% open_ids))
 
+  # Competing objects: regions of every searched class, under the same border
+  # rule as the selection, with at least one quarter of the selected area.
+  # Regions that lie inside the filled mask are holes of the artifact and are
+  # not counted.
+  n_other <- 0L
+  for (cand in candidates) {
+    tab <- cand$table
+    if (best$interior) tab <- tab[!tab$touches_border, , drop = FALSE]
+    for (l in tab$label[tab$area >= 0.25 * best$area]) {
+      if (identical(cand$class, best$cand$class) && l == best$label) next
+      if (!all(mask[cand$lab == l & cand$fg])) n_other <- n_other + 1L
+    }
+  }
+
   warnings <- character(0)
   frac <- mean(mask)
   if (!best$interior)
@@ -125,8 +138,8 @@ segment_image <- function(gray, threshold = NULL, polarity = c("auto", "light", 
     warnings <- c(warnings, "The detected artifact covers less than 1 percent of the image or crop. Crop closer to the artifact.")
   if (frac > 0.90)
     warnings <- c(warnings, "The detected region covers more than 90 percent of the image or crop. Check the artifact brightness setting.")
-  if (best$n_other > 0)
-    warnings <- c(warnings, sprintf("%d other object(s) at least one quarter the size of the selected one were detected and ignored. Crop to the artifact if the wrong object was selected.", best$n_other))
+  if (n_other > 0)
+    warnings <- c(warnings, sprintf("%d other object(s) at least one quarter the size of the selected one were detected and ignored. Crop to the artifact if the wrong object was selected.", n_other))
   list(mask = mask, threshold = threshold, polarity = best$cand$class, warnings = warnings)
 }
 

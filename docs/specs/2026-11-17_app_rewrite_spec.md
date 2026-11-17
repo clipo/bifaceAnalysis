@@ -602,3 +602,41 @@ independently of the resampling function and requires equal steps within 1e-8.
 could not load the app from the local server. Clicks, the crop box, and scale
 transfer are covered at the server level by `tests/testthat/test-server.R`;
 pointer behaviour and layout in a browser remain unchecked.
+
+Build notes added 2026-11-17 after Codex audit 2026-11-17_build (ledger:
+`docs/audits/codex_audit_2026-11-17_build_ledger.md`). Where these notes differ
+from sections 6 to 8, the notes describe the app as built.
+(d) Section 6.2, midline rule. The half-open crossing rule of revision 2 is
+replaced. It counted a vertex that touches the midline twice from one side and
+not at all from the other, so a shape and its mirror image could receive
+different base points. The base is now the lowest point at which the outline
+meets the midline, where the points are every vertex on the midline and every
+point at which an edge passes through it. A base that falls on an existing
+vertex reuses that vertex. The warning is given when the outline meets the
+midline at more than two points.
+(e) Section 6.5, image identity (author decision, 2026-11-17). A sample image
+is identified by its file name. Every upload receives new ids of the form
+`upload<k>/<file name>`, so an uploaded file never inherits the crop, scale,
+landmarks, or saved specimen of an earlier image with the same name. Threshold,
+polarity, speck removal, and tip direction are controls that apply to whichever
+image is shown. Crop, scale clicks, and landmarks are kept per image.
+(f) Section 6.5, merge rule. Two contours are the same when they have the same
+base row and number of vertices and no coordinate differs by more than 1e-9
+pixels. A loaded outline is accepted only if it has finite coordinates no
+larger than 1e6, consecutive row numbers, no repeated vertex, positive
+counterclockwise area, the tip above the base, and yields finite measurements,
+200 distinct points, and Fourier coefficients.
+(g) Scale (author decision, 2026-11-17). "Clear scale for this image" removes
+the image's own scale and stops the shared scale from applying to that image
+until a new scale is clicked on it. The shared scale is the most recently set
+scale and stays available to other images.
+(h) Section 7.6 (author decision, 2026-11-17). The three region boundaries must
+differ. When two are equal the region results are withheld with a message.
+(i) Numerical zero. PCA reports no components, and RV is not available, when
+the root sum of squares of the centred values is at most 1e-10 of the root sum
+of squares of the values. The dendrogram's dashed line is drawn only when the
+two merges that bound the chosen number of clusters differ in height.
+(j) Section 10, scale test. The test uses two images taken at the same original
+resolution and resized by factors 1 and 0.5, which is the case the shared scale
+is designed for. The same image stored at two resolutions has two different
+original scales and is not a valid use of a shared scale.

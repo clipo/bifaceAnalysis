@@ -65,3 +65,29 @@ test_that("process_image reports unusable input with a message and no error", {
   ok <- process_image(img, direction = "left")
   expect_true(ok$ok); expect_false(ok$settings$cropped); expect_false(ok$settings$manual_landmarks)
 })
+
+test_that("a competing object of the other brightness class triggers the warning", {
+  g <- matrix(0.1, 300, 200); g[151:300, ] <- 0.9      # dark half and light half, both on the border
+  g[190:266, 60:136] <- 0.1                             # dark square on the light half: 5929 cells
+  g[40:110, 60:130] <- 0.9                              # light square on the dark half: 5041 cells
+  s <- segment_image(g, threshold = 0.5)
+  expect_identical(s$polarity, "dark"); expect_identical(sum(s$mask), 5929L)
+  expect_true(any(grepl("^1 other object", s$warnings)))
+  g[40:110, 60:130] <- 0.1                              # remove the competitor
+  expect_false(any(grepl("other object", segment_image(g, threshold = 0.5)$warnings)))
+  # A hole inside the selected region is part of the artifact, not a competitor.
+  h <- matrix(0.1, 200, 200); h[40:160, 40:160] <- 0.9; h[60:140, 60:140] <- 0.1
+  sh <- segment_image(h, threshold = 0.5)
+  expect_identical(sum(sh$mask), 121L * 121L); expect_length(sh$warnings, 0)
+})
+
+test_that("a crop outside the image gives a message", {
+  img <- load_working_image(DEMO_FILES[["artifact4"]])
+  expect_lt(img$width, 160)
+  for (crop in list(c(160, 240, 70, 170), c(-50, -10, 0, 50), c(10, 100, 5000, 6000), c(NA, 50, 0, 50))) {
+    p <- process_image(img, crop = crop, direction = "left")
+    expect_false(p$ok); expect_match(p$warnings, "too small or lies outside")
+  }
+  p <- process_image(img, crop = c(-30, 1000, -30, 1000), direction = "left")     # larger than the image: clipped
+  expect_true(p$ok); expect_identical(dim(p$mask), c(img$width, img$height)); expect_equal(p$mask_origin, c(0, 0))
+})

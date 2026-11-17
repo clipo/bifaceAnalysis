@@ -39,15 +39,20 @@ process_image <- function(img, crop = NULL, threshold = NULL, polarity = "auto",
   w <- img$width; h <- img$height
   whole <- c(0, w, 0, h)
   if (is.null(crop)) crop <- whole
-  xi <- seq(max(1L, floor(crop[1]) + 1L), min(w, ceiling(crop[2])))
-  yi <- seq(max(1L, floor(crop[3]) + 1L), min(h, ceiling(crop[4])))
-  if (length(xi) < 20L || length(yi) < 20L)
-    return(list(ok = FALSE, warnings = "The crop is too small. Drag a larger rectangle around the artifact."))
+  crop <- as.numeric(crop)
+  # Part of the crop that lies inside the image, as pixel index ranges.
+  x1 <- max(1, floor(crop[1]) + 1); x2 <- min(w, ceiling(crop[2]))
+  y1 <- max(1, floor(crop[3]) + 1); y2 <- min(h, ceiling(crop[4]))
+  if (length(crop) != 4L || !all(is.finite(crop)) || x2 - x1 + 1 < 20 || y2 - y1 + 1 < 20)
+    return(list(ok = FALSE, warnings = "The crop is too small or lies outside the image. Drag a larger rectangle around the artifact."))
+  xi <- seq.int(x1, x2); yi <- seq.int(y1, y2)
   seg <- segment_image(img$gray[xi, yi, drop = FALSE], threshold, polarity, speck_side)
   if (is.null(seg$mask)) return(list(ok = FALSE, warnings = seg$warnings, threshold = seg$threshold))
+  # The mask and the plot coordinates of its lower-index corner, for display.
+  shown <- list(mask = seg$mask, mask_origin = c(xi[1] - 1, yi[1] - 1))
   o <- mask_outline(seg$mask)
   if (is.null(o) || nrow(o) < 100L)
-    return(list(ok = FALSE, threshold = seg$threshold,
+    return(list(ok = FALSE, threshold = seg$threshold, mask = shown$mask, mask_origin = shown$mask_origin,
                 warnings = c(seg$warnings, "The detected outline has fewer than 100 points, which is too small to analyse. Use a larger image of the artifact or adjust the threshold.")))
   # Pixel index i has its centre at plot coordinate i - 0.5.
   o <- cbind(x = o[, 1] + xi[1] - 1.5, y = o[, 2] + yi[1] - 1.5)
@@ -56,8 +61,10 @@ process_image <- function(img, crop = NULL, threshold = NULL, polarity = "auto",
                   error = function(e) e)
   if (inherits(std, "error"))
     return(list(ok = FALSE, threshold = seg$threshold, outline_plot = o,
+                mask = shown$mask, mask_origin = shown$mask_origin,
                 warnings = c(seg$warnings, conditionMessage(std))))
   list(ok = TRUE, warnings = c(seg$warnings, std$warnings), outline_plot = o, std = std,
+       mask = shown$mask, mask_origin = shown$mask_origin,
        threshold = seg$threshold, polarity = seg$polarity,
        tip_plot = c(std$tip_input[1], -std$tip_input[2]),
        base_plot = c(std$base_input[1], -std$base_input[2]),
@@ -82,6 +89,45 @@ new_specimen <- function(id, name, group, outline, base_row, px_per_mm = NA_real
        points = points_from_outline(outline, as.integer(base_row)),
        px_per_mm = if (is.null(px_per_mm) || !is.finite(px_per_mm)) NA_real_ else px_per_mm,
        settings = settings)
+}
+
+# Reason why an oriented contour cannot be analysed, or NULL when it can. A
+# usable contour has finite coordinates, no repeated consecutive vertex,
+# positive (counterclockwise) area, the tip (row 1) above the base (row
+# base_row), and yields finite measurements, 200 distinct corresponding points,
+# and Fourier coefficients.
+MAX_COORDINATE <- 1e6
+outline_problem <- function(outline, base_row) {
+  n <- nrow(outline)
+  if (!all(is.finite(outline))) return("it contains values that are not finite numbers")
+  if (max(abs(outline)) > MAX_COORDINATE) return("it contains coordinates larger than 1,000,000")
+  if (is.na(base_row) || base_row < 2L || base_row > n) return("its base row is outside the outline")
+  seg <- sqrt(rowSums((outline[c(2:n, 1L), , drop = FALSE] - outline)^2))
+  if (any(seg <= 0)) return("it repeats a vertex")
+  ext <- c(diff(range(outline[, 1])), diff(range(outline[, 2])))
+  if (any(ext <= 0)) return("it has no width or no length")
+  area <- polygon_moments(outline)$area
+  if (!is.finite(area) || area <= 1e-9 * prod(ext)) return("it does not enclose an area in counterclockwise order")
+  if (outline[1, 2] <= outline[base_row, 2]) return("its tip is not above its base")
+  derived <- tryCatch({
+    pts <- points_from_outline(outline, base_row)
+    step <- sqrt(rowSums((pts[c(2:nrow(pts), 1L), , drop = FALSE] - pts)^2))
+    m <- measure_outline(outline)
+    f <- efa_vector(efa_forward(center_scale(pts), 30L))
+    a <- asymmetry_score(pts, mirror_index())
+    all(is.finite(pts)) && all(step > 0) && all(is.finite(f)) && is.finite(a) &&
+      all(is.finite(unlist(m[c("length_px", "width_px", "area_px2", "length_width_ratio", "widest_position")])))
+  }, error = function(e) FALSE)
+  if (!isTRUE(derived)) return("its corresponding points or measurements cannot be computed")
+  NULL
+}
+
+# TRUE when two contours have the same base row, the same number of vertices,
+# and coordinates that differ by at most 1e-9 pixels. (A contour written to
+# CSV and read back differs from the original by rounding of that order.)
+same_contour <- function(a, b) {
+  identical(dim(a$outline), dim(b$outline)) && identical(a$base_row, b$base_row) &&
+    max(abs(a$outline - b$outline)) <= 1e-9
 }
 
 # One row of measurements per specimen.
@@ -138,7 +184,14 @@ specimens_from_csv <- function(path, max_specimens = 500L) {
     stop("This outline file has a schema version this app cannot read. Expected version ", SCHEMA_VERSION, ".")
   if (!is.numeric(df$x) || !is.numeric(df$y) || anyNA(df$x) || anyNA(df$y))
     stop("The x and y columns of the outline file must contain only numbers.")
+  if (!all(is.finite(df$x)) || !all(is.finite(df$y)) || max(abs(c(df$x, df$y))) > MAX_COORDINATE)
+    stop("The x and y columns of the outline file must contain finite numbers no larger than 1,000,000.")
+  if (!is.numeric(df$row) || anyNA(df$row))
+    stop("The row column of the outline file must contain only numbers.")
+  if (anyNA(df$id) || any(!nzchar(trimws(df$id))))
+    stop("Every row of the outline file must have an id.")
   df$group[is.na(df$group)] <- ""
+  df$specimen[is.na(df$specimen)] <- ""
   ids <- unique(df$id)
   if (length(ids) > max_specimens) stop("The outline file holds more than ", max_specimens, " specimens.")
   na_null <- function(v) if (length(v) == 0L || is.na(v)) NULL else v
@@ -146,8 +199,19 @@ specimens_from_csv <- function(path, max_specimens = 500L) {
     d <- df[df$id == id, , drop = FALSE]
     d <- d[order(d$row), , drop = FALSE]
     base_row <- suppressWarnings(as.integer(d$base_row[1]))
-    if (nrow(d) < 10L || is.na(base_row) || base_row < 2L || base_row > nrow(d))
-      stop("Specimen '", d$specimen[1], "' in the outline file has an incomplete outline.")
+    label <- if (nzchar(d$specimen[1])) d$specimen[1] else id
+    if (nrow(d) < 10L || is.na(base_row) || base_row < 2L || base_row > nrow(d) ||
+        !isTRUE(all.equal(as.numeric(d$row), as.numeric(seq_len(nrow(d))))))
+      stop("Specimen '", label, "' in the outline file has an incomplete outline.")
+    one_value <- function(col) length(unique(d[[col]])) == 1L
+    if (!all(vapply(c("specimen", "group", "px_per_mm", "base_row"), one_value, logical(1))))
+      stop("Specimen '", label, "' in the outline file has rows that disagree about its name, group, scale, or base row.")
+    ppm <- suppressWarnings(as.numeric(d$px_per_mm[1]))
+    if (!is.na(ppm) && (!is.finite(ppm) || ppm <= 0))
+      stop("Specimen '", label, "' in the outline file has a scale that is not a positive number.")
+    problem <- outline_problem(cbind(d$x, d$y), base_row)
+    if (!is.null(problem))
+      stop("Specimen '", label, "' in the outline file has an outline that cannot be analysed: ", problem, ".")
     settings <- list(threshold = na_null(suppressWarnings(as.numeric(d$threshold[1]))),
                      polarity = na_null(as.character(d$polarity[1])),
                      speck = na_null(suppressWarnings(as.integer(d$speck[1]))),
@@ -161,13 +225,13 @@ specimens_from_csv <- function(path, max_specimens = 500L) {
 }
 
 # Merge loaded specimens into a store (both lists named by id). A loaded
-# specimen whose id exists replaces the stored one when their contours are
-# identical, and otherwise is added under a new id. Display names are made
-# unique.
+# specimen whose id exists replaces the stored one, including its name, group,
+# scale, and settings, when their contours are the same (see same_contour),
+# and otherwise is added under a new id. Display names are made unique.
 merge_specimens <- function(store, loaded) {
   for (s in loaded) {
     id <- s$id
-    if (!is.null(store[[id]]) && !isTRUE(all.equal(store[[id]]$outline, s$outline, tolerance = 1e-9))) {
+    if (!is.null(store[[id]]) && !same_contour(store[[id]], s)) {
       k <- 2L
       while (!is.null(store[[paste0(id, " #", k)]])) k <- k + 1L
       id <- paste0(id, " #", k)

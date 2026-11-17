@@ -37,13 +37,13 @@ test_that("a near-circular outline triggers the axis warning", {
 test_that("a basal notch on the midline receives the base landmark", {
   r <- standardize_yup(NOTCHED, "up")
   expect_equal(unname(r$base_input), c(0, -1), tolerance = 1e-8)
-  expect_false(any(grepl("more than twice", r$warnings)))
+  expect_false(any(grepl("more than two points", r$warnings)))
 })
 
 test_that("a midline that crosses a barb gives the lowest crossing and a warning", {
   r <- standardize_yup(BARBED, "up")
   expect_equal(unname(r$base_input[2]), -6, tolerance = 1e-8)
-  expect_true(any(grepl("more than twice", r$warnings)))
+  expect_true(any(grepl("more than two points", r$warnings)))
 })
 
 test_that("a truncated tip triggers the blunt-tip warning and the demo outlines do not", {
@@ -136,4 +136,49 @@ test_that("a shared scale transfers between images resized by different factors"
   expect_equal(len(A) / 20, 30, tolerance = 0.02)
   expect_equal(len(B) / ppm_to_working(shared, B$factor), 60, tolerance = 0.02)
   expect_equal(len(B) / 10, 60, tolerance = 0.02)                 # B's own two-click scale: 10 working px per mm
+})
+
+test_that("manual landmarks at the automatic positions give the same points and the same edge order", {
+  kite <- rbind(KITE[1:4, ], c(0, -2), KITE[5:7, ])            # a vertex at the base position
+  prep <- prepare_outline(cbind(kite[, 1], -kite[, 2]))
+  auto <- standardize_outline(prep, "up")
+  expect_equal(unname(auto$base_input), c(0, -2), tolerance = 1e-10)
+  man <- standardize_outline(prep, "left", tip = auto$tip_input, base = auto$base_input)
+  expect_equal(man$points, auto$points, tolerance = 1e-8)
+  expect_identical(man$base_row, auto$base_row)
+  # Edge 1 (points 2 to 100) is the left edge when the tip is up.
+  for (r in list(auto, man)) { expect_lt(max(r$points[2:100, 1]), 0); expect_gt(min(r$points[102:200, 1]), 0) }
+  asym <- standardize_yup(KITE_ASYM, "up")
+  expect_lt(mean(asym$points[2:100, 1]), mean(asym$points[102:200, 1]))
+})
+
+test_that("a base point on either vertex of its edge is not duplicated", {
+  no_zero <- function(r) all(sqrt(rowSums(diff(rbind(r$outline, r$outline[1, ]))^2)) > 1e-9)
+  # Base on the second vertex of an edge with decreasing x (area centroid at 0, 0).
+  second <- rbind(c(-sqrt(11), 1), c(-sqrt(11), -1), c(1, -1), c(1, -3), c(0, -4), c(2, -3), c(2, 3), c(0, 4), c(1, 3), c(1, 1))
+  expect_equal(polygon_moments(second)$centroid, c(0, 0), tolerance = 1e-12)
+  r <- standardize_yup(second, "up")
+  expect_true(no_zero(r)); expect_equal(nrow(r$outline), nrow(second))
+  expect_equal(unname(r$base), c(0, -4), tolerance = 1e-10); expect_equal(unname(r$outline[r$base_row, ]), c(0, -4), tolerance = 1e-10)
+  # Its mirror image puts the base on the first vertex of an edge with increasing x.
+  first <- cbind(-second[, 1], second[, 2])[nrow(second):1, ]
+  m <- standardize_yup(first, "up")
+  expect_true(no_zero(m)); expect_equal(nrow(m$outline), nrow(first)); expect_equal(unname(m$base), c(0, -4), tolerance = 1e-10)
+  # The two are mirror images, so their points correspond under the mirror pairing.
+  expect_equal(unname(cbind(-m$points[mirror_index(), 1], m$points[mirror_index(), 2])), unname(r$points), tolerance = 1e-8)
+  for (k in c(2, 6)) expect_equal(standardize_yup(shift_start(second, k), "up")$points, r$points, tolerance = 1e-8)
+  # Base inside an edge: one vertex is inserted.
+  k <- standardize_yup(KITE, "up")
+  expect_true(no_zero(k)); expect_equal(nrow(k$outline), nrow(KITE) + 1L)
+})
+
+test_that("the points where an outline meets a line are the same for a shape and its mirror image", {
+  right <- rbind(c(0, 0), c(2, -1), c(2, 3), c(0, 2), c(1, 1))          # (0, 0) and (0, 2) touch x = 0 from the right
+  left <- cbind(-right[, 1], right[, 2])[5:1, ]                          # the same vertices touch from the left
+  for (p in list(right, left)) expect_equal(sort(vertical_crossings(p, 0)$y), c(0, 2))
+  through <- rbind(c(-1, 0), c(0, -1), c(1, 0), c(0, 1))                 # the outline passes through x = 0 at two vertices
+  cr <- vertical_crossings(through, 0)
+  expect_equal(sort(cr$y), c(-1, 1)); expect_false(anyNA(cr$vertex))
+  inside <- vertical_crossings(rbind(c(-1, -1), c(1, -1), c(1, 1), c(-1, 1)), 0.25)
+  expect_equal(sort(inside$y), c(-1, 1)); expect_true(all(is.na(inside$vertex)))
 })

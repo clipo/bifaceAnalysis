@@ -71,10 +71,27 @@ symmetrize_shape <- function(m, pair) {
   s / sqrt(sum(s^2))
 }
 
+# Variation is treated as zero when the root sum of squares of the centred
+# values is at most this fraction of the root sum of squares of the values
+# themselves. Centring identical rows of non-integer values leaves rounding
+# residue of about 1e-16 of their size, which must not be read as variation.
+NUMERICAL_ZERO <- 1e-10
+
+# TRUE when the rows of a matrix do not differ (see NUMERICAL_ZERO).
+no_variation <- function(x) {
+  x <- as.matrix(x)
+  dev <- sqrt(sum(sweep(x, 2, colMeans(x))^2))
+  !is.finite(dev) || dev <= NUMERICAL_ZERO * sqrt(sum(x^2))
+}
+
 # PCA of a specimens-by-variables matrix (centred, unscaled). Only components
 # whose variance exceeds 1e-12 of the total are kept. `rank` is their number
-# and is 0 when all rows are identical.
+# and is 0 when the rows do not differ (see NUMERICAL_ZERO).
 shape_pca <- function(x) {
+  if (no_variation(x))
+    return(list(scores = matrix(0, nrow(x), 0L, dimnames = list(rownames(x), NULL)),
+                loadings = matrix(0, ncol(x), 0L, dimnames = list(colnames(x), NULL)),
+                center = colMeans(x), sdev = numeric(0), explained = numeric(0), rank = 0L))
   p <- stats::prcomp(x, center = TRUE, scale. = FALSE)
   var <- p$sdev^2
   total <- sum(var)
@@ -167,13 +184,15 @@ region_block <- function(aligned, idx) {
 
 # RV coefficient between two specimens-by-variables blocks:
 # tr(XX'YY') / sqrt(tr(XX'XX') tr(YY'YY')) for column-centred X and Y.
-# NA when either block has no variance.
+# NA when either block has no variation (see NUMERICAL_ZERO). Each centred
+# block is divided by its own root sum of squares first, which leaves RV
+# unchanged and makes the result independent of the units of the blocks.
 rv_coefficient <- function(x, y) {
-  x <- scale(x, scale = FALSE); y <- scale(y, scale = FALSE)
-  kx <- tcrossprod(x); ky <- tcrossprod(y)
-  den <- sqrt(sum(kx^2) * sum(ky^2))
-  if (!is.finite(den) || den < 1e-24) return(NA_real_)
-  sum(kx * ky) / den
+  x <- as.matrix(x); y <- as.matrix(y)
+  if (no_variation(x) || no_variation(y)) return(NA_real_)
+  unit <- function(m) { m <- sweep(m, 2, colMeans(m)); m / sqrt(sum(m^2)) }
+  kx <- tcrossprod(unit(x)); ky <- tcrossprod(unit(y))
+  sum(kx * ky) / sqrt(sum(kx^2) * sum(ky^2))
 }
 
 # Observed RV for each pair of regions with a reference: the mean and central

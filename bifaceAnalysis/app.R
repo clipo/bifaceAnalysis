@@ -106,8 +106,8 @@ ui <- page_navbar(
           accordion_panel(
             "Scale",
             numericInput("scale_mm", "Distance between the two clicked points (mm)", value = 10, min = 0.1),
-            checkboxInput("scale_all", "Use this scale for images that have none of their own", FALSE),
-            actionButton("clear_scale", "Clear scale", class = "btn-sm"),
+            checkboxInput("scale_all", "Use the most recently set scale for images that have none of their own", FALSE),
+            actionButton("clear_scale", "Clear scale for this image", class = "btn-sm"),
             textOutput("scale_text")
           )
         ),
@@ -122,9 +122,14 @@ ui <- page_navbar(
         card(card_header("Image with detected outline"),
              plotOutput("image_plot", height = "480px", click = "img_click",
                         brush = brushOpts("img_brush", resetOnNew = TRUE))),
-        card(card_header("Standardized outline"),
-             plotOutput("std_plot", height = "380px"),
-             p(class = "small text-muted", "The outline turned tip up. Crosses mark the tip and base. Colours show the four regions used in step 4."))
+        div(
+          card(card_header("Detected region (mask)"),
+               plotOutput("mask_plot", height = "170px"),
+               p(class = "small text-muted", "White is the region taken to be the artifact, within the image or crop.")),
+          card(card_header("Standardized outline"),
+               plotOutput("std_plot", height = "330px"),
+               p(class = "small text-muted", "The outline turned tip up. Crosses mark the tip and base. Colours show the four regions used in step 4."))
+        )
       )
     )
   ),
@@ -167,7 +172,7 @@ ui <- page_navbar(
         numericInput("k", "Number of clusters", value = 2, min = 2, step = 1),
         accordion(open = FALSE, accordion_panel(
           "Region boundaries",
-          p(class = "small", "Position along each edge, as a percentage of the distance from tip to base."),
+          p(class = "small", "Position along each edge, as a percentage of the distance from tip to base. The three values must differ."),
           sliderInput("b_tip", "Tip ends at", min = 5, max = 95, value = 15, step = 5, post = "%"),
           sliderInput("b_blade", "Blade ends at", min = 5, max = 95, value = 60, step = 5, post = "%"),
           sliderInput("b_shoulder", "Shoulder ends at", min = 5, max = 95, value = 80, step = 5, post = "%")
@@ -212,7 +217,7 @@ ui <- page_navbar(
         tags$dt("Orientation, tip, and base"),
         tags$dd("You state which way the tip points. The app computes the outline's axis of elongation nearest that direction and turns the outline so the axis is vertical with the tip up. The tip is the outline point farthest along the axis. The base is the point where the midline (the line through the centre of area, parallel to the axis) meets the far end of the outline. You can set both by clicking if the automatic choice is wrong."),
         tags$dt("Corresponding points"),
-        tags$dd("The tip and base divide the outline into two edges. Each edge is represented by 100 points spaced evenly along its length. Point 30 on an edge is 30 percent of the way from tip to base on every specimen. This allows specimens to be compared point by point, but an equal fraction of edge length does not always fall on the same feature of different artifacts."),
+        tags$dd("The tip and base divide the outline into two edges. Each edge is represented by 100 points spaced evenly along its length. The point 30 steps from the tip is 30 percent of the way along the edge on every specimen. This allows specimens to be compared point by point, but an equal fraction of edge length does not always fall on the same feature of different artifacts. Whether 100 fixed points per edge are adequate for the region results has not been tested."),
         tags$dt("Alignment"),
         tags$dd("Generalized Procrustes alignment centres every outline, scales it to the same size, and rotates it to best fit the mean of all outlines. After this step outlines differ only in shape."),
         tags$dt("Elliptical Fourier analysis and principal components"),
@@ -220,7 +225,7 @@ ui <- page_navbar(
         tags$dt("Clusters"),
         tags$dd("Ward's hierarchical clustering groups specimens by the distances between their coefficient sets."),
         tags$dt("Regions"),
-        tags$dd("Each edge is divided into tip, blade, shoulder, and base by position along its length. The app reports how variable each region is and how strongly pairs of regions vary together.")
+        tags$dd("Each edge is divided into tip, blade, shoulder, and base by position along its length. The app reports how variable each region is and how strongly pairs of regions vary together. Each region combines the points of both edges. This gives a region the same definition on every specimen, but it does not remove the variation that comes from which face was photographed.")
       ),
       h6("Limits to keep in mind"),
       tags$ul(
@@ -241,7 +246,9 @@ server <- function(input, output, session) {
     idx = 1L,
     state = list(),          # per image: crop, scale (2 x 2), scale_mm, tip, base
     specimens = list(),      # saved specimens, named by id
-    shared_ppm = NULL,       # shared scale in ORIGINAL pixels per mm
+    uploads = NULL,          # data frame id, name, path of the current upload
+    batch = 0L,              # number of uploads so far in this session
+    shared_ppm = NULL,       # most recently set scale, in ORIGINAL pixels per mm
     last_saved = ""
   )
 
@@ -249,13 +256,22 @@ server <- function(input, output, session) {
   plural <- function(n) if (n == 1) "" else "s"
 
   # ---- images ---------------------------------------------------------------
+  # Image identity. A sample image is identified by its file name. Every
+  # upload receives new ids, so an uploaded file never inherits the crop,
+  # scale, landmarks, or saved specimen of an earlier image with the same name.
+  observeEvent(input$images, {
+    rv$batch <- rv$batch + 1L
+    nm <- input$images$name
+    rv$uploads <- data.frame(id = sprintf("upload%d/%s", rv$batch, make.unique(nm)), name = nm,
+                             path = input$images$datapath, stringsAsFactors = FALSE)
+  }, priority = 100)
   image_files <- reactive({
     if (identical(input$image_source, "upload")) {
-      if (is.null(input$images)) return(data.frame(name = character(0), path = character(0)))
-      data.frame(name = input$images$name, path = input$images$datapath, stringsAsFactors = FALSE)
+      if (is.null(rv$uploads)) return(data.frame(id = character(0), name = character(0), path = character(0)))
+      rv$uploads
     } else {
       f <- list.files(DEMO_DIR, pattern = IMAGE_PATTERN, full.names = TRUE)
-      data.frame(name = basename(f), path = f, stringsAsFactors = FALSE)
+      data.frame(id = basename(f), name = basename(f), path = f, stringsAsFactors = FALSE)
     }
   })
   observeEvent(image_files(), { rv$idx <- 1L })
@@ -267,6 +283,11 @@ server <- function(input, output, session) {
   observeEvent(input$go_results, nav_select("nav", "results"))
 
   current_id <- reactive({
+    f <- image_files()
+    if (nrow(f) == 0) return(NULL)
+    f$id[min(rv$idx, nrow(f))]
+  })
+  current_name <- reactive({
     f <- image_files()
     if (nrow(f) == 0) return(NULL)
     f$name[min(rv$idx, nrow(f))]
@@ -304,12 +325,19 @@ server <- function(input, output, session) {
   output$image_title <- renderText({
     f <- image_files()
     if (nrow(f) == 0) return("No images. Go to step 1.")
-    sprintf("Image %d of %d: %s", min(rv$idx, nrow(f)), nrow(f), current_id())
+    sprintf("Image %d of %d: %s", min(rv$idx, nrow(f)), nrow(f), current_name())
   })
-  observeEvent(current_id(), {
+  # The name and group fields follow the image shown and its saved record, so
+  # they are refreshed when either changes (for example after loading a file).
+  saved_current <- reactive({
     id <- current_id()
-    saved <- rv$specimens[[id]]
-    updateTextInput(session, "spec_name", value = if (is.null(saved)) tools::file_path_sans_ext(id) else saved$name)
+    if (is.null(id)) NULL else rv$specimens[[id]]
+  })
+  observeEvent(list(current_id(), saved_current()), {
+    id <- current_id()
+    req(id)
+    saved <- saved_current()
+    updateTextInput(session, "spec_name", value = if (is.null(saved)) tools::file_path_sans_ext(current_name()) else saved$name)
     if (!is.null(saved)) updateTextInput(session, "spec_group", value = saved$group)
   })
 
@@ -323,7 +351,7 @@ server <- function(input, output, session) {
       crop <- c(max(0, b$xmin), min(img$width, b$xmax), max(0, b$ymin), min(img$height, b$ymax))
       if (crop[2] - crop[1] >= 20 && crop[4] - crop[3] >= 20) {
         set_state("crop", crop)
-        set_state("tip", NULL); set_state("base", NULL)
+        set_state("tip", NULL); set_state("base", NULL); set_state("pending_tip", NULL)
       }
     }
     session$resetBrush("img_brush")
@@ -336,18 +364,33 @@ server <- function(input, output, session) {
       sc <- state()$scale
       set_state("scale", if (is.null(sc) || nrow(sc) >= 2) matrix(p, 1) else rbind(sc, p))
       set_state("scale_mm", input$scale_mm)
+      set_state("no_shared", NULL)
     } else if (identical(input$mode, "landmarks")) {
-      s <- state()
-      if (is.null(s$tip) || !is.null(s$base)) { set_state("tip", p); set_state("base", NULL) }
-      else set_state("base", p)
+      # The first click is held as a pending tip. The pair replaces the current
+      # landmarks only when the two clicks fall on different outline points, so
+      # an invalid pair leaves the previous landmarks in place.
+      pending <- state()$pending_tip
+      if (is.null(pending)) { set_state("pending_tip", p); return() }
+      set_state("pending_tip", NULL)
+      o <- isolate(processed())$outline_plot
+      nearest <- function(q) which.min((o[, 1] - q[1])^2 + (o[, 2] - q[2])^2)
+      if (!is.null(o) && nearest(pending) == nearest(p)) {
+        notify("The tip and base clicks fall on the same outline point, so they were not used. Click the tip and then the base at two different places.", "error")
+        return()
+      }
+      set_state("tip", pending); set_state("base", p)
     }
   })
   observeEvent(input$scale_mm, {
     if (!is.null(isolate(state()$scale))) set_state("scale_mm", input$scale_mm)
   }, ignoreInit = TRUE)
-  observeEvent(input$clear_crop, { set_state("crop", NULL); set_state("tip", NULL); set_state("base", NULL) })
-  observeEvent(input$clear_landmarks, { set_state("tip", NULL); set_state("base", NULL) })
-  observeEvent(input$clear_scale, set_state("scale", NULL))
+  clear_landmarks <- function() { set_state("tip", NULL); set_state("base", NULL); set_state("pending_tip", NULL) }
+  observeEvent(input$clear_crop, { set_state("crop", NULL); clear_landmarks() })
+  observeEvent(input$clear_landmarks, clear_landmarks())
+  # Clearing removes this image's own scale and also stops the shared scale
+  # from applying to it, until a new scale is clicked on this image. The shared
+  # scale remains available to other images.
+  observeEvent(input$clear_scale, { set_state("scale", NULL); set_state("no_shared", TRUE) })
 
   # Scale of the current image in working pixels per mm, from its own clicks.
   own_ppm <- reactive({
@@ -357,8 +400,9 @@ server <- function(input, output, session) {
     d <- sqrt(sum((s$scale[1, ] - s$scale[2, ])^2))
     if (d < 2) NA_real_ else d / mm
   })
-  # The shared scale is kept in original pixels so it transfers between images
-  # that were resized by different factors.
+  # The shared scale is the most recently set scale. It is kept in original
+  # pixels so it transfers between images that were resized by different
+  # factors, and it is applied only when the shared-scale box is ticked.
   observeEvent(own_ppm(), {
     img <- current_image()
     if (is.finite(own_ppm()) && !is.null(img)) rv$shared_ppm <- ppm_to_original(own_ppm(), img$factor)
@@ -366,7 +410,8 @@ server <- function(input, output, session) {
   current_ppm <- reactive({
     if (is.finite(own_ppm())) return(own_ppm())
     img <- current_image()
-    if (isTRUE(input$scale_all) && !is.null(rv$shared_ppm) && !is.null(img)) return(ppm_to_working(rv$shared_ppm, img$factor))
+    if (isTRUE(input$scale_all) && !isTRUE(state()$no_shared) && !is.null(rv$shared_ppm) && !is.null(img))
+      return(ppm_to_working(rv$shared_ppm, img$factor))
     NA_real_
   })
   output$scale_text <- renderText({
@@ -374,6 +419,7 @@ server <- function(input, output, session) {
     if (is.finite(own_ppm())) sprintf("Scale for this image: %.2f pixels per mm.", own_ppm())
     else if (!is.null(s$scale) && nrow(s$scale) == 1) "One point set. Click the other end of the known distance."
     else if (is.finite(current_ppm())) sprintf("Using the shared scale: %.2f pixels per mm.", current_ppm())
+    else if (isTRUE(s$no_shared)) "Scale cleared for this image. Its measurements will be in pixels."
     else "No scale set. Measurements will be in pixels."
   })
 
@@ -404,7 +450,7 @@ server <- function(input, output, session) {
     p <- processed()
     s <- state()
     msgs <- p$warnings
-    if (!is.null(s$tip) && is.null(s$base)) msgs <- c(msgs, "Tip set. Now click the base to finish placing the landmarks.")
+    if (!is.null(s$pending_tip)) msgs <- c(msgs, "Tip clicked. Now click the base to finish placing the landmarks.")
     if (length(msgs) == 0) return(NULL)
     tagList(lapply(msgs, function(m) div(class = "warn-box", m)))
   })
@@ -423,21 +469,32 @@ server <- function(input, output, session) {
       pts <- rbind(p$tip_plot, p$base_plot)
       points(pts, pch = 4, cex = 2.2, lwd = 3, col = "#56B4E9")
       text(pts, labels = c("tip", "base"), pos = 3, col = "#56B4E9", font = 2, cex = 1.1)
-    } else if (!is.null(s$tip)) points(s$tip[1], s$tip[2], pch = 4, cex = 2.2, lwd = 3, col = "#56B4E9")
+    }
+    if (!is.null(s$pending_tip)) points(s$pending_tip[1], s$pending_tip[2], pch = 1, cex = 2.2, lwd = 3, col = "#F0E442")
     if (!is.null(s$scale)) {
       points(s$scale, pch = 3, cex = 2, lwd = 3, col = "#009E73")
       if (nrow(s$scale) == 2) lines(s$scale, col = "#009E73", lwd = 3)
     }
   })
 
+  output$mask_plot <- renderPlot({
+    p <- processed()
+    validate(need(!is.null(p$mask), "No region detected yet."))
+    m <- p$mask; o <- p$mask_origin
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = o[1] + c(0, nrow(m)), ylim = o[2] + c(ncol(m), 0), asp = 1, xaxs = "i", yaxs = "i",
+         axes = FALSE, xlab = "", ylab = "")
+    rasterImage(grDevices::as.raster(t(m) * 1), o[1], o[2] + ncol(m), o[1] + nrow(m), o[2], interpolate = FALSE)
+  })
+
   output$std_plot <- renderPlot({
     p <- processed()
     validate(need(isTRUE(p$ok), "No outline to show yet."))
-    reg <- assign_regions(point_positions(), boundaries())
+    reg <- if (boundaries_ok()) assign_regions(point_positions(), boundaries()) else rep(NA, N_POINTS)
     op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
     plot(p$std$outline, type = "n", asp = 1, axes = FALSE, xlab = "", ylab = "")
     polygon(p$std$outline, col = "grey93", border = "grey50")
-    points(p$std$points, pch = 19, cex = 0.6, col = REGION_COLOURS[as.character(reg)])
+    points(p$std$points, pch = 19, cex = 0.6, col = ifelse(is.na(reg), "grey40", REGION_COLOURS[as.character(reg)]))
     points(rbind(p$std$tip, p$std$base), pch = 4, cex = 2, lwd = 3)
   })
 
@@ -486,8 +543,12 @@ server <- function(input, output, session) {
     updateSelectInput(session, "edit_which", choices = ch, selected = isolate(input$edit_which))
     updateSelectInput(session, "recon_which", choices = unname(nm), selected = isolate(input$recon_which))
   })
-  observeEvent(input$edit_which, {
-    s <- rv$specimens[[input$edit_which]]
+  edited <- reactive({
+    id <- input$edit_which
+    if (is.null(id) || !nzchar(id)) NULL else rv$specimens[[id]]
+  })
+  observeEvent(edited(), {
+    s <- edited()
     req(s)
     updateTextInput(session, "edit_name", value = s$name)
     updateTextInput(session, "edit_group", value = s$group)
@@ -549,6 +610,11 @@ server <- function(input, output, session) {
              need(pca()$rank >= min_rank, sprintf("This result needs at least %d components of shape variation. These specimens have %d.", min_rank, pca()$rank)))
   }
   boundaries <- reactive(sort(c(input$b_tip, input$b_blade, input$b_shoulder)) / 100)
+  # The three boundaries must differ. Equal values would leave a region empty.
+  boundaries_ok <- reactive(length(boundaries()) == 3L && all(diff(boundaries()) > 0))
+  need_boundaries <- function() {
+    validate(need(boundaries_ok(), "Two region boundaries are equal. Choose three different values in the Region boundaries panel."))
+  }
   shapes <- reactive({
     pts <- lapply(specimens(), function(s) s$points)
     if (isTRUE(input$symmetrize)) lapply(pts, symmetrize_shape, pair = mirror_index()) else pts
@@ -571,7 +637,7 @@ server <- function(input, output, session) {
   })
   clusters <- reactive(stats::cutree(tree(), k_used()))
   sil <- reactive(silhouette_by_k(coefs(), tree()))
-  regions <- reactive(assign_regions(point_positions(), boundaries()))
+  regions <- reactive({ req(boundaries_ok()); assign_regions(point_positions(), boundaries()) })
   pvar <- reactive(point_variance(aligned()$aligned))
   region_var <- reactive(tapply(pvar(), regions(), mean))
   rv_table <- reactive({
@@ -606,11 +672,11 @@ server <- function(input, output, session) {
     pcs = reactive({ need_pca(1L); plot_pc_shapes(pca()) }),
     dend = reactive({ need_n(4, "Clustering"); plot_dendrogram(tree(), k_used()) }),
     sil = reactive({ need_n(4, "Clustering"); plot_silhouette(sil(), k_used()) }),
-    regions = reactive({ need_n(2, "Region analysis"); plot_regions(aligned()$mean, regions()) }),
+    regions = reactive({ need_n(2, "Region analysis"); need_boundaries(); plot_regions(aligned()$mean, regions()) }),
     pvar = reactive({ need_n(2, "Region analysis"); plot_point_variance(aligned()$mean, pvar()) }),
-    rvar = reactive({ need_n(2, "Region analysis"); plot_region_variance(region_var()) }),
+    rvar = reactive({ need_n(2, "Region analysis"); need_boundaries(); plot_region_variance(region_var()) }),
     rv = reactive({
-      need_n(4, "Covariation between regions")
+      need_n(4, "Covariation between regions"); need_boundaries()
       validate(need(any(is.finite(rv_table()$rv)), "Covariation between regions is not available because at least one region does not vary between these specimens."))
       plot_region_rv(rv_table())
     })
@@ -624,7 +690,7 @@ server <- function(input, output, session) {
     pcs = reactive({ req(n_spec() >= 3, pca()$rank >= 1L); text_pc_shapes(pca()) }),
     clust = reactive({ req(n_spec() >= 4); text_clusters(tree(), k_used(), sil(), groups()) }),
     regions = reactive({
-      req(n_spec() >= 2)
+      req(n_spec() >= 2, boundaries_ok())
       text_regions(region_var(), if (n_spec() >= 4) rv_table() else NULL, n_spec(), boundaries())
     })
   )

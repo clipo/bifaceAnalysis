@@ -217,13 +217,24 @@ dendrogram_segments <- function(tree) {
   list(segments = do.call(rbind, segs), leaves = data.frame(x = seq_len(n), label = tree$labels[tree$order]))
 }
 
-# Tree with leaves coloured by cluster and a dashed line where it is cut.
+# Height at which a horizontal cut of the tree gives k clusters: midway
+# between the merges that leave k - 1 and k clusters. NA when those two merges
+# are at the same height (within NUMERICAL_ZERO of the tallest merge), because
+# no horizontal cut then gives exactly k clusters.
+tree_cut_height <- function(tree, k) {
+  h <- sort(tree$height, decreasing = TRUE)
+  if (k < 2L || k > length(h)) return(NA_real_)
+  if (h[k - 1L] - h[k] <= NUMERICAL_ZERO * max(h[1], .Machine$double.xmin)) return(NA_real_)
+  mean(h[c(k - 1L, k)])
+}
+
+# Tree with leaves coloured by cluster and, when one exists, a dashed line at
+# the height where a cut gives k clusters.
 plot_dendrogram <- function(tree, k) {
   d <- dendrogram_segments(tree)
   cl <- stats::cutree(tree, k)
   d$leaves$cluster <- factor(cl[d$leaves$label])
-  h <- sort(tree$height, decreasing = TRUE)
-  cut_h <- if (k >= 2 && k <= length(h)) mean(h[c(k - 1, k)]) else NA_real_
+  cut_h <- tree_cut_height(tree, k)
   p <- ggplot2::ggplot() +
     ggplot2::geom_segment(data = d$segments, ggplot2::aes(x = x, xend = xend, y = y, yend = yend), colour = "grey25") +
     ggplot2::geom_point(data = d$leaves, ggplot2::aes(x, 0, colour = cluster), size = 3) +

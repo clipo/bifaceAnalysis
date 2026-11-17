@@ -53,7 +53,9 @@ axis_direction <- function(xy, direction, min_ratio = 1.1) {
   if (e$values[1] / e$values[2] < min_ratio) return(list(u = d, isotropic = TRUE))
   dots <- as.numeric(crossprod(e$vectors, d))
   # eigen() lists the major axis first and which.max takes the first maximum,
-  # so an exact 45 degree tie resolves to the major axis.
+  # so an exact 45 degree tie resolves to the major axis. Cosines are rounded
+  # to 9 decimals, so values closer than that are treated as tied. The same
+  # rounding defines ties among tip candidates and among cross-section widths.
   k <- which.max(round(abs(dots), 9))
   u <- e$vectors[, k] * sign(dots[k])
   list(u = u / sqrt(sum(u^2)), isotropic = FALSE)
@@ -69,17 +71,24 @@ rotate_axis_up <- function(xy, u) {
   out
 }
 
-# Crossings of the vertical line x = x0 with a closed polygon. An edge from
-# vertex i to i+1 crosses when x_i <= x0 < x_{i+1} or x_{i+1} <= x0 < x_i, so a
-# vertex on the line is counted once.
-# Returns a data frame: edge (index of the edge's first vertex), y.
+# Points where a closed polygon meets the vertical line x = x0: every vertex
+# on the line (within a tolerance of 1e-9 of the polygon's width), and every
+# point where an edge passes through the line between two vertices on opposite
+# sides. A vertex that only touches the line is included once, so a shape and
+# its mirror image give the same points.
+# Returns a data frame: edge (index of the edge's first vertex, or of the
+# vertex itself), y, and vertex (the vertex index, or NA for a point inside an
+# edge).
 vertical_crossings <- function(xy, x0) {
   n <- nrow(xy)
   x <- xy[, 1]; y <- xy[, 2]
   j <- c(2:n, 1L)
-  i <- which((x <= x0 & x[j] > x0) | (x > x0 & x[j] <= x0))
+  on <- abs(x - x0) <= 1e-9 * max(diff(range(x)), .Machine$double.xmin)
+  side <- ifelse(on, 0, sign(x - x0))
+  i <- which(side * side[j] < 0)
   t <- (x0 - x[i]) / (x[j[i]] - x[i])
-  data.frame(edge = i, y = y[i] + t * (y[j[i]] - y[i]))
+  rbind(data.frame(edge = i, y = y[i] + t * (y[j[i]] - y[i]), vertex = rep(NA_integer_, length(i))),
+        data.frame(edge = which(on), y = y[on], vertex = which(on)))
 }
 
 # Points at given arc-length fractions along an open polyline.
@@ -175,13 +184,19 @@ standardize_outline <- function(xy, direction = "up", tip = NULL, base = NULL) {
     e <- cr$edge[k]
     bpt <- c(x = cx, y = cr$y[k])
     if (nrow(cr) > 2L)
-      warnings <- c(warnings, "The midline crosses the outline more than twice (for example through a basal notch or a barb). The base marker was placed at the crossing farthest from the tip. Check it, and set the tip and base by hand if it is misplaced.")
-    # The half-open crossing rule means the base point can coincide with the
-    # edge's first vertex but never with its second.
-    on_vertex <- sqrt(sum((rot[e, ] - bpt)^2)) < 1e-12
-    left <- if (on_vertex) rot[1:e, , drop = FALSE] else rbind(rot[1:e, , drop = FALSE], bpt)
-    rest <- if (e < n) rot[(e + 1L):n, , drop = FALSE] else rot[0, , drop = FALSE]
-    right <- rbind(bpt, rest, rot[1, , drop = FALSE])
+      warnings <- c(warnings, "The midline meets the outline at more than two points (for example through a basal notch or a barb). The base marker was placed at the point farthest from the tip. Check it, and set the tip and base by hand if it is misplaced.")
+    # A base point on an existing vertex reuses that vertex, so the contour
+    # never contains a zero-length segment. Otherwise a vertex is inserted.
+    b <- cr$vertex[k]
+    if (!is.na(b)) {
+      if (b == 1L) stop("The tip and the base fall on the same outline point, so the outline cannot be divided into two edges.")
+      left <- rot[1:b, , drop = FALSE]
+      right <- rbind(rot[b:n, , drop = FALSE], rot[1, , drop = FALSE])
+    } else {
+      left <- rbind(rot[1:e, , drop = FALSE], bpt)
+      rest <- if (e < n) rot[(e + 1L):n, , drop = FALSE] else rot[0, , drop = FALSE]
+      right <- rbind(bpt, rest, rot[1, , drop = FALSE])
+    }
   }
 
   outline <- rbind(left, right[-c(1L, nrow(right)), , drop = FALSE])
