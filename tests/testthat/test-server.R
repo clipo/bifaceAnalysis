@@ -559,3 +559,30 @@ test_that("whether the comparison is shown is decided from labels without the ou
     expect_false(coll_available())
   })
 })
+
+test_that("only rendered outputs compute the collection statistics, never an observer", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    # Observers run even when their tab is hidden, so an observer that reads the
+    # statistics recomputes the permutation references on every edit in step 3.
+    # testServer renders every output regardless of visibility, so the check is
+    # that every call to pair_table comes from inside an output's render
+    # function. The app's R/ files are sourced above the reactives' environment.
+    fenv <- environment(attr(coll_stats, "observable")$.origFunc)
+    while (!exists("pair_table", envir = fenv, inherits = FALSE)) fenv <- parent.env(fenv)
+    original <- get("pair_table", envir = fenv); calls <- 0L; outside <- 0L
+    assign("pair_table", function(...) {
+      calls <<- calls + 1L
+      if (!any(vapply(sys.calls(), function(x) identical(x[[1]], as.name("renderFunc")), logical(1)))) outside <<- outside + 1L
+      original(...)
+    }, envir = fenv)
+    on.exit(assign("pair_table", original, envir = fenv), add = TRUE)
+    session$setInputs(load_outlines = upload(collection_csv()))
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "C,41,-77")))
+    id <- names(rv$specimens)[1]
+    session$setInputs(edit_which = id, edit_name = "renamed", edit_group = "B", edit_apply = 1)
+    expect_identical(rv$specimens[[id]]$group, "B")
+    expect_gt(calls, 0L)                  # the wrapper is the copy the app calls
+    expect_identical(outside, 0L)
+  })
+})

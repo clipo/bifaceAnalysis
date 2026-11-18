@@ -230,7 +230,7 @@ ui <- page_navbar(
                                       fileInput("locations_file", "Load a locations file", accept = ".csv"),
                                       div(downloadButton("dl_loc_template", "Download a locations template", class = "btn-sm"),
                                           actionButton("clear_locations", "Clear locations", class = "btn-sm"))),
-                       selectInput("map_value", "Colour the map by", choices = c("Mean length / width" = "length_width_mean")),
+                       uiOutput("map_value_ui"),
                        checkboxInput("map_in_report", "Include the map in the PDF report (the map shows the positions of the collections)", TRUE),
                        plotOutput("coll_map", height = "480px"),
                        uiOutput("coll_map_text", class = "small"),
@@ -735,11 +735,13 @@ server <- function(input, output, session) {
     sm <- coll_summary()
     MAP_CHOICES[vapply(MAP_CHOICES, function(v) all(is.finite(sm[[v]])), logical(1))]
   })
-  observe({
+  # A rendered output rather than an observer: Shiny pauses it while the tab is
+  # hidden, so edits in step 3 do not recompute the collection statistics.
+  output$map_value_ui <- renderUI({
     ch <- tryCatch(map_choices(), error = function(e) MAP_CHOICES["Mean length / width"])
     cur <- isolate(input$map_value)
-    updateSelectInput(session, "map_value", choices = ch,
-                      selected = if (length(cur) == 1L && cur %in% ch) cur else "length_width_mean")
+    selectInput("map_value", "Colour the map by", choices = ch,
+                selected = if (length(cur) == 1L && cur %in% ch) cur else "length_width_mean")
   })
   map_value <- reactive(if (!is.null(input$map_value) && input$map_value %in% map_choices()) input$map_value else "length_width_mean")
   observeEvent(input$locations_file, {
