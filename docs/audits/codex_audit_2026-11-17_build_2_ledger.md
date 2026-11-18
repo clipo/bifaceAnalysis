@@ -162,4 +162,4 @@ No answer led to a follow-up round.
 
 ## Sign-off
 
-Pending: the author's sign-off on this ledger.
+Signed off by the author (Carl Lipo) on 2026-11-18. Blocking findings open: 0.
