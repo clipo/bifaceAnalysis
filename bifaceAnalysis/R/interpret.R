@@ -151,7 +151,8 @@ COLLECTION_CAUTIONS <- c(
   "Left and right in an outline depend on which face was photographed. Unless every collection was photographed with a consistent face up, tick \"Analyse symmetric shapes\" before comparing collections.",
   "Collections photographed or outlined by different people, at different image resolutions, or with different detection settings can differ for that reason alone. Edge roughness from image resolution affects the higher harmonics.",
   "The PC axes describe variation among all specimens. They are not the directions that best separate the collections.",
-  "Every saved specimen, including unlabelled ones and those in collections too small to compare, is part of the alignment, the automatic choice of the number of harmonics, and the PCA. Adding, removing, or editing any specimen can therefore change these results."
+  "Every saved specimen, including unlabelled ones and those in collections too small to compare, is part of the alignment, the automatic choice of the number of harmonics, and the PCA. Adding, removing, or editing any specimen can therefore change these results.",
+  "Colours on the map show means of samples. Rounded or approximate coordinates change the geographic distances, and a few locations cannot establish a spatial pattern."
 )
 
 COLLECTIONS_HELP <- "Collections are defined by group labels. Give each specimen the name of its collection, for example its site, in step 2 or step 3. Each collection needs at least 3 specimens, and at least 2 collections are needed for a comparison. A file of collection locations is optional and adds a map."
@@ -186,20 +187,20 @@ text_collections <- function(cd, share, pairs, within) {
            sprintf("There %s %d pair%s of collections. Pairs that share a collection are not independent of one another, and with several pairs an observed distance can fall outside its grey range through sampling alone.",
                    if (np == 1) "is" else "are", np, if (np == 1) "" else "s"))
   v <- stats::setNames(within$variance, within$collection)
-  out <- c(out, if (all(v > 0)) sprintf("Shape variance within collections is largest in %s and smallest in %s, a ratio of %s to 1. Variance from 3 to 5 specimens is imprecise. The bars show how much it changes when one specimen is left out; they are not intervals.",
+  out <- c(out, if (all(v > 0)) sprintf("Shape variance within collections is largest in %s and smallest in %s, a ratio of %s to 1.",
                                         names(v)[which.max(v)], names(v)[which.min(v)], fmt_num(max(v) / min(v), 1))
          else if (any(v > 0)) sprintf("The specimens of %s do not differ in outline, so no ratio of variances is given.", name_list(names(v)[v == 0]))
-         else "No collection shows variation in outline shape among its specimens.")
+         else "No collection shows variation in outline shape among its specimens.",
+         "Variance from 3 to 5 specimens is imprecise. The bars in the variance plot show how much it changes when one specimen is left out. They are not intervals.")
   c(out, "Colour the PCA plot by group label to see the specimens of each collection in the space of the principal components.")
 }
 
 text_collection_geo <- function(geo) {
   if (!isTRUE(geo$available)) return(geo$reason)
   r <- geo$reference
-  G <- (1 + sqrt(1 + 8 * geo$n_pairs)) / 2
-  c(sprintf("Each point is a pair of collections: %d located collections give %d pairs. Pairs that share a collection are not independent, so the points are not independent observations.", as.integer(G), as.integer(geo$n_pairs)),
-    sprintf("The correlation between corrected shape distance and geographic distance is %s. Reassigning the positions among the collections (%d assignments%s) gave values from %s to %s (central 95%%), with a mean of %s.",
-            fmt_num(geo$r), as.integer(geo$n_assignments), if (geo$n_assignments <= 5040) ", all possible" else ", chosen at random",
+  c(sprintf("Each point is a pair of collections: %d located collections give %d pairs. Pairs that share a collection are not independent, so the points are not independent observations.", as.integer(geo$n_located), as.integer(geo$n_pairs)),
+    sprintf("The correlation between corrected shape distance and geographic distance is %s. Reassigning the positions among the collections (%d assignments, %s) gave values from %s to %s (central 95%%), with a mean of %s.",
+            fmt_num(geo$r), as.integer(geo$n_assignments), if (identical(geo$method, "complete")) "all possible" else "chosen at random",
             fmt_num(r$low), fmt_num(r$high), fmt_num(r$mean)),
     "With a few locations, any pattern here can arise from the particular collections sampled. A few locations cannot establish a spatial pattern. Rounded or approximate coordinates change the geographic distances.")
 }

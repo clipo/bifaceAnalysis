@@ -149,6 +149,7 @@ test_that("the variance text covers positive, mixed-zero, and all-zero variances
   expect_match(txt(c(1, 4)), "a ratio of 4.0 to 1")
   expect_match(txt(c(0, 4)), "The specimens of A do not differ")
   expect_match(txt(c(0, 0)), "No collection shows variation")
+  for (v in list(c(1, 4), c(0, 4), c(0, 0))) expect_match(txt(v), "Variance from 3 to 5 specimens is imprecise")
   expect_match(txt(c(1, 4)), "does not show that the collections have the same mean shape")
 })
 
@@ -301,3 +302,119 @@ test_that("collection membership excludes unlabelled specimens and small collect
   expect_identical(cd$unlabelled, 2L); expect_identical(cd$small, c(C = 2L))
   expect_match(paste(text_collection_membership(cd), collapse = " "), "2 specimens without a group label")
 })
+
+# ---- repairs after the build audit (2026-11-17_build_2) ----------------------
+
+test_that("duplicate non-integer rows have zero variance and zero leave-one-out range", {
+  row <- c(0.1, pi, 1 / 3, exp(1), sqrt(2))
+  X <- rbind(row, row, row) * 1.37
+  expect_identical(row_variance(X), 0)
+  expect_identical(loo_variance_range(X), c(low = 0, high = 0))
+  set.seed(SEED)
+  Y <- matrix(stats::rnorm(15), 3)
+  wt <- within_table(rbind(X, Y), factor(rep(c("A", "B"), each = 3)))
+  expect_identical(wt$variance[1], 0); expect_gt(wt$variance[2], 0)
+  expect_equal(pair_distance(X, Y)[["square"]], sum((colMeans(X) - colMeans(Y))^2) - row_variance(Y) / 3, tolerance = 1e-12)
+})
+
+test_that("pair references equal an independent calculation and restore the random state", {
+  set.seed(SEED)
+  d <- sim_groups(c(3, 4, 5), p = 6)
+  pr <- pair_table(d$X, d$g, n_perm = 199, seed = 7)
+  set.seed(7)
+  for (k in seq_len(nrow(pr))) {
+    pool <- rbind(d$X[d$g == pr$collection_a[k], ], d$X[d$g == pr$collection_b[k], ])
+    na <- pr$n_a[k]
+    v <- numeric(199)
+    for (i in 1:199) {
+      s <- sample.int(nrow(pool))
+      v[i] <- sqrt(sum((colMeans(pool[s[1:na], , drop = FALSE]) - colMeans(pool[s[-(1:na)], , drop = FALSE]))^2))
+    }
+    expect_equal(pr$reference_mean[k], mean(v), tolerance = 1e-12)
+    expect_equal(pr$reference_low[k], unname(stats::quantile(v, 0.025)), tolerance = 1e-12)
+    expect_equal(pr$reference_high[k], unname(stats::quantile(v, 0.975)), tolerance = 1e-12)
+  }
+  set.seed(5); before <- .Random.seed
+  pair_table(d$X, d$g, n_perm = 9)
+  expect_identical(.Random.seed, before)
+  rm(".Random.seed", envir = globalenv())
+  pair_table(d$X, d$g, n_perm = 9)
+  expect_false(exists(".Random.seed", envir = globalenv()))
+})
+
+# Heap's algorithm: every permutation of 1..n (independent of all_permutations).
+heap_permutations <- function(n) {
+  a <- seq_len(n); out <- list(a); c <- integer(n); i <- 1L
+  while (i <= n) {
+    if (c[i] < i - 1L) {
+      j <- if (i %% 2L == 1L) 1L else c[i] + 1L
+      tmp <- a[j]; a[j] <- a[i]; a[i] <- tmp
+      out[[length(out) + 1L]] <- a; c[i] <- c[i] + 1L; i <- 1L
+    } else { c[i] <- 0L; i <- i + 1L }
+  }
+  do.call(rbind, out)
+}
+
+test_that("seven locations use all 5040 assignments and eight use 999 random ones", {
+  set.seed(SEED)
+  mk <- function(G) {
+    pos <- cbind(stats::runif(G, 38, 44), stats::runif(G, -80, -72))
+    geo <- geo_distance_matrix(pos[, 1], pos[, 2], LETTERS[1:G])
+    sh <- as.matrix(stats::dist(matrix(stats::rnorm(G * 3), G))); dimnames(sh) <- dimnames(geo)
+    list(pos = pos, geo = geo, sh = sh)
+  }
+  low <- function(m) m[lower.tri(m)]
+  f7 <- mk(7)
+  r7 <- shape_geo_correlation(f7$sh, f7$geo, f7$pos)
+  hp <- heap_permutations(7)
+  expect_identical(nrow(unique(hp)), 5040L)
+  enum <- apply(hp, 1, function(p) stats::cor(low(f7$sh), low(f7$geo[p, p])))
+  expect_identical(r7$method, "complete"); expect_identical(r7$n_assignments, 5040L)
+  expect_equal(sort(r7$reference$values), sort(enum), tolerance = 1e-12)
+  expect_match(paste(text_collection_geo(r7), collapse = " "), "5040 assignments, all possible")
+
+  f8 <- mk(8)
+  set.seed(3); before <- .Random.seed
+  r8 <- shape_geo_correlation(f8$sh, f8$geo, f8$pos, seed = 11)
+  expect_identical(.Random.seed, before)
+  expect_identical(r8$method, "random"); expect_identical(r8$n_assignments, 999L)
+  set.seed(11)
+  perms <- t(vapply(1:999, function(i) sample.int(8), integer(8)))
+  oracle <- apply(perms, 1, function(p) stats::cor(low(f8$sh), low(f8$geo[p, p])))
+  expect_equal(r8$reference$values, oracle, tolerance = 1e-12)
+  txt <- paste(text_collection_geo(r8), collapse = " ")
+  expect_match(txt, "999 assignments, chosen at random"); expect_false(grepl("all possible", txt))
+  expect_match(txt, "8 located collections give 28 pairs")
+})
+
+test_that("pairs whose labels coincide keep separate rows with their own values", {
+  set.seed(SEED)
+  X <- matrix(stats::rnorm(12 * 4), 12)
+  g <- factor(rep(c("A", "B and C", "A and B", "C"), each = 3), levels = c("A", "B and C", "A and B", "C"))
+  pr <- pair_table(X, g, n_perm = 19)
+  expect_identical(nrow(pr), 6L)
+  b <- ggplot2::ggplot_build(plot_pair_distances(pr))
+  obs <- b$data[[3]]
+  expect_identical(length(unique(obs$y)), 6L)
+  expect_equal(obs$x[order(-as.numeric(obs$y))], pr$raw_distance, tolerance = 1e-12)
+  labs <- b$layout$panel_params[[1]]$y$get_labels()
+  expect_identical(length(unique(labs)), 6L)
+})
+
+test_that("map plots build for 2, 3, 6, and 9 collections, and clipped windows are drawn as computed", {
+  skip_if_not_installed("maps")
+  for (G in c(2, 3, 6, 9)) {
+    set.seed(SEED)
+    loc <- data.frame(collection = paste("Site", seq_len(G)), latitude = stats::runif(G, 40, 43), longitude = stats::runif(G, -78, -73))
+    w <- map_window(loc$latitude, loc$longitude)
+    b <- expect_silent(ggplot2::ggplot_build(plot_collection_map(loc, seq_len(G), "Value", w)))
+    expect_identical(nrow(b$data[[length(b$data) - 3L]]), as.integer(G))
+  }
+  w <- map_window(c(-79, 79), c(0, 10))
+  expect_equal(w$ylim, c(-85, 85))
+  b <- ggplot2::ggplot_build(plot_collection_map(data.frame(collection = c("N", "S"), latitude = c(-79, 79), longitude = c(0, 10)), 1:2, "V", w))
+  expect_equal(b$layout$panel_params[[1]]$y.range, c(-85, 85))
+  w1 <- map_window(c(10, 10), c(20, 30))                       # latitude range 0, longitude range 10
+  expect_equal(diff(w1$ylim), 0.5); expect_equal(diff(w1$xlim), 14)
+})
+

@@ -79,7 +79,13 @@ share_reference <- function(X, group, n_perm = 999L, seed = 1L) {
 }
 
 # Within-collection shape variance with divisor n - 1 (sum over variables).
-row_variance <- function(X) sum(sweep(X, 2, colMeans(X))^2) / (nrow(X) - 1L)
+# Rows that do not differ under the app's numerical-zero rule (NUMERICAL_ZERO,
+# main spec build note i) have variance 0, not the rounding residue of
+# centring, which would otherwise be reported as a tiny positive variance.
+row_variance <- function(X) {
+  if (no_variation(X)) return(0)
+  sum(sweep(X, 2, colMeans(X))^2) / (nrow(X) - 1L)
+}
 
 within_variance <- function(X, group) {
   vapply(levels(group), function(g) row_variance(X[group == g, , drop = FALSE]), numeric(1))
@@ -190,10 +196,11 @@ shape_geo_correlation <- function(shape_d, geo_d, positions, n_perm = 999L, seed
   r <- matrix_correlation(shape_d, geo_d)
   if (is.na(r))
     return(list(available = FALSE, reason = "Shape distance does not vary between the located collections, so no correlation can be computed."))
-  perms <- if (G <= 7L) all_permutations(G) else with_seed(seed, t(vapply(seq_len(n_perm), function(i) sample.int(G), integer(G))))
+  complete <- G <= 7L
+  perms <- if (complete) all_permutations(G) else with_seed(seed, t(vapply(seq_len(n_perm), function(i) sample.int(G), integer(G))))
   vals <- apply(perms, 1, function(p) matrix_correlation(shape_d, geo_d[p, p]))
   list(available = TRUE, r = r, reference = summarize_reference(vals), n_assignments = nrow(perms),
-       n_pairs = G * (G - 1L) / 2L)
+       method = if (complete) "complete" else "random", n_located = G, n_pairs = G * (G - 1L) / 2L)
 }
 
 # ---- locations file ---------------------------------------------------------

@@ -66,16 +66,17 @@ test_that("saving replaces a specimen for the same image and advances", {
     session$elapse(300)
     expect_true(processed()$ok)
     expect_identical(current_id(), "artifact1.jpg")
-    session$setInputs(spec_name = "first", spec_group = "g1", save_spec = 1)
+    session$setInputs(spec_name = "first", spec_group = " g1 ", save_spec = 1)
     expect_identical(n_spec(), 1L); expect_identical(rv$idx, 2L)
+    expect_identical(unname(groups()), "g1")                  # trimmed when saved
     session$setInputs(prev_img = 1)
     session$elapse(300)
     session$setInputs(spec_name = "renamed", save_spec = 2)
     expect_identical(n_spec(), 1L)
     expect_identical(rv$specimens[["artifact1.jpg"]]$name, "renamed")
     expect_match(rv$last_saved, "^Replaced")
-    session$setInputs(edit_which = "artifact1.jpg", edit_name = "again", edit_group = "g2", edit_apply = 1)
-    expect_identical(unname(groups()), "g2")
+    session$setInputs(edit_which = "artifact1.jpg", edit_name = "again", edit_group = "  g2 ", edit_apply = 1)
+    expect_identical(unname(groups()), "g2")                  # trimmed when edited
     session$setInputs(edit_remove = 1)
     expect_identical(n_spec(), 0L)
   })
@@ -376,12 +377,16 @@ test_that("labelled collections produce every collection result, and labels do n
       expect_identical(try_figure(figures[[f]]), "plot", info = f)
     expect_identical(try_figure(figures$coll_map), "message")
     expect_identical(try_text(texts$coll), "text")
+    expect_true(coll_available())
+    tab <- output$coll_pair_table
+    expect_match(tab, "Corrected square", fixed = TRUE); expect_match(tab, "Corrected distance", fixed = TRUE)
     expect_match(paste(texts$coll(), collapse = " "), "2 specimens without a group label")
 
     before <- list(pca = pca(), tree = tree(), rv = rv_table())
     for (id in names(rv$specimens)) rv$specimens[[id]]$group <- ""
     expect_identical(list(pca = pca(), tree = tree(), rv = rv_table()), before)
     expect_identical(try_figure(figures$coll_means), "message")
+    expect_false(coll_available())
   })
 })
 
@@ -463,3 +468,80 @@ test_that("five located collections give the shape-geography comparison, and the
     expect_true(all(is.finite(read.csv(output$dl_coll_dist, na.strings = "")$distance_km)))
   })
 })
+
+# Specimens made from one outline, stretched by the given factors.
+stretched <- function(src, factors, group, prefix) {
+  b <- process_image(load_working_image(DEMO_FILES[[src]]), direction = "left")$std
+  out <- lapply(seq_along(factors), function(i)
+    new_specimen(sprintf("%s%d", prefix, i), sprintf("%s_%d", prefix, i), group,
+                 cbind(b$outline[, 1] * factors[i], b$outline[, 2]), b$base_row, px_per_mm = 10))
+  stats::setNames(out, vapply(out, function(s) s$id, ""))
+}
+
+test_that("collections of identical specimens have zero variance, and the map selector follows the PCA rank", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    rv$specimens <- c(stretched("artifact1", c(0.9, 1, 1.1), "A", "a"), stretched("artifact2", c(0.9, 1, 1.1), "B", "b"),
+                      stretched("artifact3", c(0.95, 1.1, 1.2), "C", "c"))
+    expect_true(pca()$rank >= 3L)
+    session$setInputs(map_value = "pc3_mean")
+    expect_identical(map_value(), "pc3_mean")
+
+    # Three copies of one outline and three of another: PCA rank 1.
+    rv$specimens <- c(stretched("artifact1", c(1, 1, 1), "A", "a"), stretched("artifact2", c(1, 1, 1), "B", "b"))
+    expect_identical(pca()$rank, 1L)
+    expect_identical(coll_stats()$within$variance, c(0, 0))
+    expect_identical(coll_stats()$within$loo_low, c(0, 0)); expect_identical(coll_stats()$within$loo_high, c(0, 0))
+    txt <- paste(texts$coll(), collapse = " ")
+    expect_match(txt, "No collection shows variation"); expect_false(grepl("a ratio of", txt))
+    expect_false(any(c("pc2_mean", "pc3_mean") %in% map_choices()))
+    expect_identical(map_value(), "length_width_mean")      # unavailable choice falls back to the default
+    pr <- coll_stats()$pairs
+    expect_equal(pr$corrected_square, pr$raw_distance^2)    # no sampling error to subtract
+
+    # One constant and one varying collection.
+    rv$specimens <- c(stretched("artifact1", c(1, 1, 1), "A", "a"), stretched("artifact2", c(0.9, 1, 1.1), "B", "b"))
+    v <- coll_stats()$within$variance
+    expect_identical(v[1], 0); expect_gt(v[2], 0)
+    expect_match(paste(texts$coll(), collapse = " "), "The specimens of A do not differ")
+  })
+})
+
+test_that("the report holds every collection section and caution, with and without the map", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$setInputs(load_outlines = upload(collection_csv()))
+    headings <- function() vapply(report_content()$sections, function(x) x$heading, "")
+    texts_of <- function() unlist(lapply(report_content()$sections, function(x) x$text))
+    coll_heads <- c("Comparison of collections: mean shapes", "Comparison of collections: before drawing conclusions",
+                    "Share of shape variation between collections", "Distances between collection means",
+                    "Corrected distances between collection means", "Shape variance within collections")
+    expect_true(all(coll_heads %in% headings()))
+    expect_false(any(c("Map of collections", "Shape distance and geographic distance") %in% headings()))
+    expect_true(all(COLLECTION_CAUTIONS %in% texts_of()))     # including the geographic caution, with no map
+    # Checked by wording, so that removing a caution from the list is detected.
+    for (w in c("Rounded or approximate coordinates change the geographic distances", "not confidence or credible intervals",
+                "tick \"Analyse symmetric shapes\"", "not the directions that best separate the collections"))
+      expect_true(any(grepl(w, texts_of(), fixed = TRUE)), info = w)
+
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "C,41,-77")))
+    session$setInputs(map_in_report = TRUE)
+    expect_true("Map of collections" %in% headings())
+    expect_false("Shape distance and geographic distance" %in% headings())   # 3 located, 5 needed
+    session$setInputs(map_in_report = FALSE)
+    expect_false("Map of collections" %in% headings())
+    expect_true(all(COLLECTION_CAUTIONS %in% texts_of()))
+
+    lines <- readLines(output$dl_coll_dist)
+    expect_identical(length(lines), 4L)                           # header and 3 pairs
+    for (id in names(rv$specimens)) if (rv$specimens[[id]]$group == "C") rv$specimens[[id]]$group <- "C2"
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3")))
+    dl <- readLines(output$dl_coll_dist)
+    expect_true(all(grepl(",$", dl[grepl("C2", dl)])))             # distance_km written as an empty cell
+    expect_false(any(grepl("NA", dl[-1])))
+    for (id in names(rv$specimens)) rv$specimens[[id]]$group <- ""
+    expect_identical(readLines(output$dl_coll_dist), paste(sprintf('"%s"', c("collection_a", "collection_b", "n_a", "n_b", "raw_distance",
+                     "reference_mean", "reference_low", "reference_high", "corrected_square", "corrected_distance", "distance_km")), collapse = ","))
+  })
+})
+

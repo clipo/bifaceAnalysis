@@ -320,10 +320,17 @@ plot_collection_means <- function(shapes) {
     category_scale(df$collection, "colour", "Collection") + theme_shape()
 }
 
-# Observed value(s) beside a reassignment reference, one row per item.
+# Observed value(s) beside a reassignment reference, one row per item. Rows
+# are keyed by position, not by label, so items whose labels coincide (for
+# example collections named "A and B" and "C", and "A" and "B and C") keep
+# separate rows; coinciding labels are numbered.
 reference_plot <- function(df, x_label, obs_label, ref_label, limits = NULL) {
-  df$item <- factor(df$item, levels = rev(unique(df$item)))
-  p <- ggplot2::ggplot(df, ggplot2::aes(y = item)) +
+  labels <- df$item
+  dup <- labels %in% labels[duplicated(labels)]
+  labels[dup] <- sprintf("%s (%d)", labels[dup], ave(seq_along(labels), labels, FUN = seq_along)[dup])
+  df$row <- factor(seq_len(nrow(df)), levels = rev(seq_len(nrow(df))))
+  p <- ggplot2::ggplot(df, ggplot2::aes(y = row)) +
+    ggplot2::scale_y_discrete(labels = stats::setNames(labels, seq_len(nrow(df)))) +
     ggplot2::geom_linerange(ggplot2::aes(xmin = low, xmax = high, colour = "ref"), linewidth = 4, alpha = 0.5) +
     ggplot2::geom_point(ggplot2::aes(x = mean, colour = "ref"), shape = 124, size = 5) +
     ggplot2::geom_point(ggplot2::aes(x = observed, colour = "obs"), size = 3.5) +

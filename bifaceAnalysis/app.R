@@ -212,6 +212,9 @@ ui <- page_navbar(
                   result_row("rv_plot", "regions_text", "340px")),
         nav_panel("Collections",
                   card(card_body(uiOutput("coll_intro"))),
+                  # The comparison is shown only when it is available; otherwise
+                  # the explanation above stands alone (collections spec section 7).
+                  conditionalPanel("output.coll_available",
                   result_row("coll_means_plot", "coll_text", "420px"),
                   layout_columns(col_widths = c(6, 6),
                                  card(plotOutput("coll_share_plot", height = "220px")),
@@ -233,7 +236,7 @@ ui <- page_navbar(
                        uiOutput("coll_map_text", class = "small"),
                        plotOutput("coll_geo_plot", height = "380px"),
                        uiOutput("coll_geo_text", class = "small")),
-                  card(card_header("Before drawing conclusions"), uiOutput("coll_cautions", class = "small")))
+                  card(card_header("Before drawing conclusions"), uiOutput("coll_cautions", class = "small"))))
       )
     )
   ),
@@ -844,6 +847,9 @@ server <- function(input, output, session) {
   output$coll_within_plot <- renderPlot(figures$coll_within())
   output$coll_map <- renderPlot(figures$coll_map())
   output$coll_geo_plot <- renderPlot(figures$coll_geo())
+  coll_available <- reactive(isTRUE(tryCatch(coll_ready(), error = function(e) FALSE)))
+  output$coll_available <- coll_available
+  outputOptions(output, "coll_available", suspendWhenHidden = FALSE)
   output$coll_intro <- renderUI({
     if (!coll_ready()) return(p(COLLECTIONS_HELP))
     paragraphs(text_collection_membership(coll()))
@@ -857,6 +863,7 @@ server <- function(input, output, session) {
     out <- data.frame(Collections = paste(pr$collection_a, "and", pr$collection_b), Sizes = paste(pr$n_a, pr$n_b, sep = " and "),
                       `Raw distance` = pr$raw_distance,
                       `Reference (mean, central 95%)` = sprintf("%.4f (%.4f to %.4f)", pr$reference_mean, pr$reference_low, pr$reference_high),
+                      `Corrected square` = pr$corrected_square,
                       `Corrected distance` = pr$corrected_distance, check.names = FALSE, stringsAsFactors = FALSE)
     if (any(is.finite(pr$distance_km))) out$`Distance (km)` <- pr$distance_km
     out
@@ -930,7 +937,8 @@ server <- function(input, output, session) {
             if (isTRUE(st$manual_landmarks)) "tip and base set by hand" else "automatic tip and base",
             if (isTRUE(st$cropped)) "cropped" else "whole image", scale)
   }
-  output$dl_report <- downloadHandler(stamp("biface_report", "pdf"), function(file) {
+  # Cover paragraphs and sections of the PDF report, as a list(cover, sections).
+  report_content <- function() {
     n <- n_spec()
     cover <- sprintf("Generated %s. %d specimen%s.", format(Sys.time(), "%Y-%m-%d %H:%M"), n, plural(n))
     sections <- list()
@@ -981,7 +989,11 @@ server <- function(input, output, session) {
         add("Shape distance and geographic distance", "coll_geo", "coll_geo")
       }
     }
-    write_report(file, cover, sections)
+    list(cover = cover, sections = sections)
+  }
+  output$dl_report <- downloadHandler(stamp("biface_report", "pdf"), function(file) {
+    rc <- report_content()
+    write_report(file, rc$cover, rc$sections)
   })
 }
 
