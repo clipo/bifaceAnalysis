@@ -545,3 +545,17 @@ test_that("the report holds every collection section and caution, with and witho
   })
 })
 
+
+test_that("whether the comparison is shown is decided from labels without the outline analysis", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$setInputs(load_outlines = upload(collection_csv()))
+    expect_true(coll_available())
+    # Unusable outlines make the analysis fail; availability must not depend on it.
+    for (id in names(rv$specimens)) { rv$specimens[[id]]$outline <- rv$specimens[[id]]$outline[1:2, ]; rv$specimens[[id]]$points <- NULL }
+    expect_error(coefs())
+    expect_true(coll_available())
+    for (id in names(rv$specimens)) rv$specimens[[id]]$group <- "one"
+    expect_false(coll_available())
+  })
+})

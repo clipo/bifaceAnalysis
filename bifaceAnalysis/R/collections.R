@@ -40,10 +40,17 @@ summarize_reference <- function(values) {
 # Rows of the full coefficient matrix that belong to eligible collections.
 # `labels` are the group labels of the rows of `coefs`, in the same order.
 # Returns list(X, group (factor), sizes, eligible, unlabelled, small, rows).
+# Collections with at least min_size specimens, from the labels alone.
+eligible_collections <- function(labels, min_size = MIN_COLLECTION_SIZE) {
+  labels <- trim_label(labels)
+  counts <- table(labels[nzchar(labels)])
+  sort(names(counts)[counts >= min_size])
+}
+
 collection_data <- function(coefs, labels, min_size = MIN_COLLECTION_SIZE) {
   labels <- trim_label(labels)
   counts <- table(labels[nzchar(labels)])
-  eligible <- sort(names(counts)[counts >= min_size])
+  eligible <- eligible_collections(labels, min_size)
   small <- counts[counts < min_size]
   rows <- which(labels %in% eligible)
   group <- factor(labels[rows], levels = eligible)

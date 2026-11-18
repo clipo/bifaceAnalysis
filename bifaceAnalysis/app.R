@@ -691,7 +691,10 @@ server <- function(input, output, session) {
   # ---- collections ----------------------------------------------------------
   # Specification: docs/specs/2026-11-17_collections_spec.md.
   coll <- reactive({ req(n_spec() >= 2); collection_data(coefs(), groups()) })
-  coll_ready <- function() n_spec() >= 2 && length(coll()$eligible) >= 2
+  # Decided from the labels alone, so that showing or hiding the comparison does
+  # not require the outline analysis (which would otherwise rerun on every edit
+  # in step 3, slowing the edit controls).
+  coll_ready <- function() n_spec() >= 2 && length(eligible_collections(groups())) >= 2
   need_coll <- function() validate(need(coll_ready(), COLLECTIONS_HELP))
   coll_stats <- reactive({
     need_coll(); cd <- coll()
@@ -850,7 +853,7 @@ server <- function(input, output, session) {
   output$coll_within_plot <- renderPlot(figures$coll_within())
   output$coll_map <- renderPlot(figures$coll_map())
   output$coll_geo_plot <- renderPlot(figures$coll_geo())
-  coll_available <- reactive(isTRUE(tryCatch(coll_ready(), error = function(e) FALSE)))
+  coll_available <- reactive(coll_ready())
   output$coll_available <- coll_available
   outputOptions(output, "coll_available", suspendWhenHidden = FALSE)
   output$coll_intro <- renderUI({
