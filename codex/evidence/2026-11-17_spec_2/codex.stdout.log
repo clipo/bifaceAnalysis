@@ -1,0 +1,147 @@
+{
+  "summary": "Audited the collections specification against the scoped code at HEAD 5481f0b2f346604195c2d4c6ebf070c6a158eaae, with independent statistical simulations and geometry checks. The core partition and reassignment methods hold, but the specification is not ready for build acceptance: its pole-distance test rejects a correct implementation, and several input, mapping, and output rules remain unresolved. The report contains derivations, numerical evidence, and a test-by-test coverage assessment.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_collections_spec.md:353-356; section 5.6",
+      "claim": "The equator-to-pole distance is 10007.543 km within 0.001 km using radius 6371.0088 km.",
+      "problem": "The specified radius gives 10007.557221018 km. A correct implementation fails the required test by 0.014221018 km.",
+      "evidence": "Section 5.6 specifies “radius 6371.0088 km”; section 10 requires “10007.543 km within 0.001.” Independent calculation is recorded in checks.log.",
+      "repair": "Change the expected value to 10007.557 km. Explicitly require degree-to-radian conversion and tolerances for every rounded geographic fixture.",
+      "acceptance_check": "One implementation returns 111.195080234, 10007.557221018, 0, and 111.195080234 km for the four fixtures, within their stated tolerances.",
+      "supersedes": ""
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_collections_spec.md:223-240",
+      "claim": "The minimum window, coord_quickmap aspect, background, and scale bar cover accepted locations.",
+      "problem": "The equivalent longitude span is undefined at the poles. At latitude 89.9, a centered minimum window extends beyond 90 degrees and requires about 286.479 degrees of longitude. Padding order, extent limits, and scale-bar placement are unspecified. A middle-latitude scale is not uniformly accurate across a wide latitude range. Small windows outside the US can still intersect coastlines or national boundaries.",
+      "evidence": "Accepted latitude includes [-90,90]. Section 6 requires “the equivalent ground distance in longitude at the middle latitude” and says a small window outside the US “shows no boundary.” Numeric examples are recorded in checks.log.",
+      "repair": "Define supported extents, padding/minimum order, polar handling, and scale-bar placement and approximation. Correct the boundary warning to say that small windows may show no boundaries. Preserve polygon geometry when zooming.",
+      "acceptance_check": "Check coincident nonpolar collections, poles, near-pole positions, wide latitude ranges, and windows crossing each edge of the US box. Assert window bounds, background layers, and scale-bar endpoint distances with maps installed.",
+      "supersedes": ""
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_collections_spec.md:180-184,218-221,297-298",
+      "claim": "Eligible collections can supply the required PC map selections and largest-to-smallest variance ratio.",
+      "problem": "Eligibility does not ensure that PC1 or PC2 exists. Identical shapes produce rank zero; rank-one data lack PC2. A smallest variance of zero makes the requested ratio infinite or undefined. Selector fallbacks, export values, and report behavior are not specified.",
+      "evidence": "Section 6 specifies “mean PC1 score (default), mean PC2 score”; section 8 requires the variance ratio. shape_pca explicitly removes unavailable components, and the independent checks reproduced ranks zero and one.",
+      "repair": "Specify rank-dependent selectors, a fallback when a selected PC disappears, missing-value representations, and text for positive/zero and zero/zero variance ratios.",
+      "acceptance_check": "Exercise rank-zero, rank-one, mixed-zero-variance, and all-zero-variance collections across maps, downloads, interpretation text, and reports.",
+      "supersedes": ""
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_collections_spec.md:61-63,269-285; bifaceAnalysis/R/store.R:88,193,221; bifaceAnalysis/app.R:586,655-658,748-752",
+      "claim": "Existing group colouring already colours specimens by the proposed collection identity.",
+      "problem": "Loaded outline labels retain surrounding spaces, while the extension trims them. Thus A and ' A ' can be separate PCA groups but one collection, and spaces-only labels can appear labelled in existing plots. Scores exports preserve those differences. Applying the palette fallback only to new figures also leaves existing group figures repeating colours.",
+      "evidence": "groups() returns s$group unchanged; specimens_from_csv passes d$group[1] into new_specimen without trimming. category_scale uses rep(OKABE_ITO, length.out = length(lv)); nine levels produced eight unique colours.",
+      "repair": "Define canonical collection labels and decide whether existing displays and score exports adopt them. Explicitly permit any resulting changes to existing tabs. Apply the palette policy through all relevant colour and fill scales.",
+      "acceptance_check": "Load A, ' A ', spaces-only, empty, and literal NA labels; verify membership, matching, legends, templates, and exports. Inspect nine-level colour and fill mappings while confirming unchanged numerical analyses.",
+      "supersedes": ""
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_collections_spec.md:70-75; bifaceAnalysis/app.R:624-638",
+      "claim": "Adding an unlabelled specimen changes collection results only slightly through alignment.",
+      "problem": "Excluded specimens also affect automatic harmonic selection and PCA directly. Changes need not be slight and can change the coefficient matrix dimension.",
+      "evidence": "power(), n_harm(), coefs(), and pca() use all specimens. The synthetic check using these helpers changed automatic H from 7 to 17 after adding an unlabelled shape.",
+      "repair": "Retain the shared analysis but name alignment, automatic H, and PCA as dependencies. Remove the unsupported magnitude qualifier.",
+      "acceptance_check": "Add an excluded specimen that changes automatic H and verify that collection calculations reuse the full-data coefficients and PCA, with accurate explanatory text.",
+      "supersedes": ""
+    },
+    {
+      "id": "F6",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "docs/specs/2026-11-17_collections_spec.md:142-151,171-176,343-347",
+      "claim": "The quantity under the displayed square root is unbiased for squared population mean distance.",
+      "problem": "Only the untruncated quantity Q = d² - v_g/n_g - v_h/n_h is unbiased under the independent-vector model. max(0,Q) is biased before taking its square root. Exact population claims also require qualifications because the app estimates alignment and H jointly from the specimens.",
+      "evidence": "The displayed formula is sqrt(max(0,...)), followed by “The quantity under the square root is an unbiased estimate.” For equal population means, 4000 independent normal simulations gave mean Q 0.01076448 but mean max(0,Q) 0.65458671.",
+      "repair": "Define Q separately, distinguish clipping from square-root bias, and state independence across coefficient vectors and collections in a fixed representation with finite second moments. Qualify application after fitted preprocessing. Explain that corrected zero does not establish population equality.",
+      "acceptance_check": "Test Q before clipping, verify exact positive and negative examples, and ensure interpretation text does not call the clipped quantity unbiased or zero evidence of identical populations.",
+      "supersedes": ""
+    },
+    {
+      "id": "F7",
+      "severity": "major",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_collections_spec.md:83-102,272-276,364-386",
+      "claim": "The locations reader, replacement behavior, and downloads have complete contracts.",
+      "problem": "Duplicate normalized headers have no rejection or precedence rule. Successful replacement and rematching after group edits are not explicit. Export schemas omit exact headers, identifier requirements, and unavailable-value conventions. The file-size cross-reference contains no numeric limit.",
+      "evidence": "Headers are matched ignoring case and surrounding spaces, allowing both latitude and ' Latitude '. Downloads refer only to the columns of section 5.5. The actual app limit is 40 * 1024^2 bytes at app.R:10.",
+      "repair": "Reject ambiguous normalized required headers, preserve literal text labels, define atomic replacement and name rematching, clarify template membership, state the byte limit, and publish complete CSV schemas and missing-value rules.",
+      "acceptance_check": "Test conflicting headers, literal NA names, successful and failed replacements, renamed collections, ineligible names in templates, and exact schemas for missing PCs, scales, locations, and header-only downloads.",
+      "supersedes": ""
+    },
+    {
+      "id": "F8",
+      "severity": "major",
+      "classification": "not_demonstrated",
+      "location": "docs/specs/2026-11-17_collections_spec.md:343-386",
+      "claim": "The specified acceptance tests establish correctness of the new statistics and figures.",
+      "problem": "The correction simulation lacks a distribution, covariance, simulation seed, and MCSE definition. A range that merely brackets hand values can be too wide. Plot-build checks can pass with missing or incorrect data. Several statistics and branches lack explicit value checks.",
+      "evidence": "Section 10 specifies 4000 draws and three Monte Carlo standard errors but no generating distribution. LOO ranges need only “bracket” hand values, and figures need only build without warnings. Full missing-test inventory is in the report.",
+      "repair": "Fix reproducible simulation fixtures, require exact LOO endpoints, independently enumerate reference distributions, and test summary values, mean reconstructions, plot data, map geometry, and unavailable states.",
+      "acceptance_check": "Tests fail for omitted correction, wrong variance divisors, incorrect reassignment pools, empty plots, repeated palettes, and wrong summary values. Use independent numeric oracles rather than object-class checks alone.",
+      "supersedes": ""
+    },
+    {
+      "id": "F9",
+      "severity": "minor",
+      "classification": "unsupported",
+      "location": "docs/specs/2026-11-17_collections_spec.md:188-209,299-315",
+      "claim": "Pair counts justify five locations as the boundary for displaying a relationship, and the cautions sufficiently prevent inferential readings.",
+      "problem": "Three or four nondegenerate locations can produce a correlation; five does not make pair distances independent. The text does not explicitly require explaining dependent pairs, distinguishing reassignment ranges from uncertainty intervals, or noting that mapped means omit sampling uncertainty.",
+      "evidence": "Section 5.6 says three and four locations produce pairs “which cannot show a relationship.” Section 8 requests pair counts and a general small-location caution but omits those distinctions.",
+      "repair": "Keep five as an operational classroom threshold. Require explicit fixed-data reference, dependent-pair, and mapped-mean cautions, including the effect of approximate coordinates on geographic distances.",
+      "acceptance_check": "Tab and report text distinguish collections from pairs, explain shared-collection dependence, and never interpret reference ranges as confidence intervals or evidence of a real population or spatial difference.",
+      "supersedes": ""
+    }
+  ],
+  "held": [
+    "Derived E(SSB/SST) = (G-1)/(N-1) for fixed rows and fixed collection sizes, including unequal sizes. Simulations and exhaustive enumeration supported it; 2/14 rounds correctly to 0.14.",
+    "The untruncated squared-distance correction is unbiased for independent coefficient vectors in a fixed representation with finite second moments. Equal covariance matrices are unnecessary.",
+    "The n-1 variance divisor gives an expectation independent of sample size under that model. Leave-one-out ranges are correctly described as sensitivity ranges; their average equals the full-sample variance.",
+    "Within-pair reassignment of raw distances matches the raw quantity displayed beside its reference.",
+    "The haversine formula is correct in radians on the stated sphere. The one-degree, identical-point, and meridian-crossing expected values hold.",
+    "Five labelled locations have 120 assignments including identity. Coincident positions can retain assignment multiplicities; two coincident groups of sizes two and three give ten coordinate arrangements, each represented twelve times.",
+    "The existing analysis reactives can supply shared alignment, symmetry, H, coefficients, and PCA without group labels changing numerical results.",
+    "The coefficient layout and zero-offset inverse transform support mean-shape reconstruction.",
+    "category_scale does repeat beyond eight levels. A shared fallback supporting colour and fill can cover the inspected group-coloured figures.",
+    "The existing report architecture supports shared screen/PDF plotting functions and text continuation pages. A synthetic polygon built successfully with a zoomed coord_quickmap window."
+  ],
+  "not_examined": [
+    "maps is not installed. Actual world, state, and county geometry and rendering were not tested; no installation was attempted.",
+    "Project-root CLAUDE.md is absent. The attempted read reported no such file, and git ls-files returned no entry.",
+    "The extension is unbuilt. No Shiny server/browser tests, project test suite, PDF generation, deployment, or performance benchmark was run.",
+    "Prior audit ledgers, image data, and unlisted source files were excluded by the brief. Supplied main-specification build notes were read.",
+    "Flagged literature attributions were not verified; no permitted source PDFs were supplied.",
+    "Real-data sampling independence and unbiasedness after fitted GPA and harmonic selection were not established by the fixed-vector simulations.",
+    "No command was blocked by the sandbox. R emitted an OpenMP temporary-file warning but completed successfully."
+  ],
+  "questions": [
+    "What latitude and extent limits should the static map support, and where should its scale bar be valid?",
+    "Should existing plots and score exports adopt canonical collection labels and consistent collection colours?",
+    "What replaces an unavailable PC selection, and what exact CSV schemas and missing-value conventions are required?",
+    "Should successful uploads replace the entire locations table, with subsequent group edits rematched only by current name?",
+    "Will population claims be qualified as applying to independent coefficient vectors in a fixed representation?",
+    "Is the share a numeric output, fixing six figures, and should report acceptance allow text continuation pages?"
+  ],
+  "evidence_files": [
+    "codex/audits/2026-11-17_spec_2_report.md",
+    "codex/evidence/2026-11-17_spec_2/checks.R",
+    "codex/evidence/2026-11-17_spec_2/checks.log"
+  ]
+}

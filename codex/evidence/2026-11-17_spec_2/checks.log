@@ -1,0 +1,72 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+Audited HEAD: 5481f0b2f346604195c2d4c6ebf070c6a158eaae 
+R version 4.6.2 (2026-10-29) 
+ggplot2 4.0.3 
+maps NOT INSTALLED 
+shiny 1.14.0 
+testthat 3.3.2 
+
+Partition sizes 5 5 5 
+           SST            SSB            SSW 
+309.7425977268  51.8927527269 257.8498449999 
+SSB+SSW-SST 1.13686837722e-13 
+Expected 0.142857142857 simulation mean 0.14236922602 MCSE 0.000177353200319 
+Pooled lm share 0.167535085932 
+
+Partition sizes 3 5 7 
+           SST            SSB            SSW 
+309.7425977268  70.0740916933 239.6685060334 
+SSB+SSW-SST 0 
+Expected 0.142857142857 simulation mean 0.14323543744 MCSE 0.000186478966376 
+Pooled lm share 0.226233305356 
+Exhaustive partition count 1680 mean 0.25 expected 0.25 
+
+Independent N(mu,I12), n=5,8, delta 2 draws 4000 
+                 mean            MCSE
+raw2    7.87728315948 0.0436151524699
+q       3.97982700603 0.0444098046268
+clipped 4.02355965440 0.0432581351346
+dc      1.84519313312 0.0124396211767
+Negative Q fraction 0.0565 raw2 expectation 7.9 
+
+Independent N(mu,I12), n=5,8, delta 0 draws 4000 
+                   mean            MCSE
+raw2    3.9062946293450 0.0246761107600
+q       0.0107644808467 0.0262014823089
+clipped 0.6545867064700 0.0172485977015
+dc      0.5010313388054 0.0100455863170
+Negative Q fraction 0.53225 raw2 expectation 3.9 
+Variance n 3 mean 11.9642802457 MCSE 0.024420608888 expected 12 
+Variance n 5 mean 12.0150197739 MCSE 0.017328266025 expected 12 
+Variance n 8 mean 11.9760792856 MCSE 0.0131242553354 expected 12 
+Variance n 20 mean 11.9879266271 MCSE 0.00795474409943 expected 12 
+LOO example rows 0,1,2,7; variance 9.66666666667 values 10.3333333333 13 14.3333333333 1 mean 9.66666666667 
+
+Haversine, radius 6371.0088 km
+     one_degree    equator_pole            same        meridian 
+  111.195080234 10007.557221018     0.000000000   111.195080234 
+Pole expected error vs 10007.543: 0.0142210179602 
+Matrix reference assignments 120 identity count 1 observed 1 mean -1.85037170771e-17 maximum 1 
+Reference quantiles -0.511752672815 0.743248859451 
+Coincident positions: 5 labelled rows, multiplicities 2 and 3; assignments 120 distinct coordinate arrangements 10 weights 12 
+
+Minimum map window (minimum final latitude span 0.5 degrees)
+middle latitude 0 latitude limits -0.25 0.25 longitude span 0.5 
+middle latitude 45 latitude limits 44.75 45.25 longitude span 0.707106781187 
+middle latitude 89.9 latitude limits 89.65 90.15 longitude span 286.47904301 
+middle latitude 90 latitude limits 89.75 90.25 longitude span 8165619676597685 
+Quarter-width scale at latitudes 45 and 60 for same longitude span: 0.707106781187 ratio
+Synthetic quickmap polygon: retained vertices 5 aspect 1.30541413528 
+category_scale nine levels unique colours 8 
+category_scale fill aesthetic: fill 
+Preserved groups vs trimmed collections:
+  stored collection nonempty_stored nonempty_trimmed
+1      A          A            TRUE             TRUE
+2     A           A            TRUE             TRUE
+3                              TRUE            FALSE
+4                             FALSE            FALSE
+5     NA         NA            TRUE             TRUE
+Synthetic eligible set automatic H 7 with unlabelled lobed shape 17 
+Constant coefficient matrix rank 0 rank-one matrix rank 1 
+
+No app implementation or project test suite executed. No maps data rendered.
