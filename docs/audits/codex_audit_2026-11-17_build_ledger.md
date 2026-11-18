@@ -14,14 +14,14 @@
 | Verdict | Count |
 |---|---|
 | Confirmed, fixed and verified in tree | 12 |
-| Confirmed, deferred with owner | 1 (F12, Carl Lipo) |
+| Confirmed, deferred with owner, since resolved | 1 (F12, resolved 2026-11-17 after sign-off) |
 | Confirmed, declined by the author | 0 |
 | Refuted | 0 |
 | Undetermined | 0 |
 
 F11 is counted as fixed. One part of it (global detection controls) was resolved by a clarifying spec note, not a code change.
 
-Blocking findings open: 1 (F12, the manual browser checklist). Milestone proceeds: no, until the checklist is completed or the author accepts the build without it.
+Blocking findings open: 0. F12 (the manual browser checklist) was open at sign-off and was resolved later on 2026-11-17, as recorded in its entry and in the addendum at the end of this ledger.
 
 How the checks were made. Each finding was reproduced by a script written for this ledger (not Codex's scripts) before any repair, repaired, and then re-run. Tests were added for each repair. Seventeen deliberately wrong versions of the code (the five that Codex reported as passing, and twelve more aimed at the repairs) were run against the test files. Sixteen are detected. The seventeenth (removing the finite-coordinate check in `specimens_from_csv`) is not detected because `outline_problem` rejects the same input at a second place with a message. Final state: `Rscript tests/testthat.R` completes with no failure in seven test files.
 
@@ -205,7 +205,7 @@ How the checks were made. Each finding was reproduced by a script written for th
 | Verdict | Confirmed |
 | Resolution | Deferred to Carl Lipo: run `shiny::runApp("bifaceAnalysis")` and complete `tests/manual_checklist.md` with date and browser. The checklist's statement of coverage was corrected, and items were added for the mask panel, scale clearing, landmark rollback, same-name upload, and equal boundaries. |
 | Tree evidence | `tests/manual_checklist.md`, status paragraph and items 3, 8a, 9, 9a, 20a, 20b. |
-| Resolved on | Open |
+| Resolved on | 2026-11-17. The checklist was run in Chrome against the test deployment at https://lipolab.shinyapps.io/bifaceAnalysis-test/. All items were checked. Items 15 and 19 were checked through the download links and not through files saved by the browser. Four defects were found, repaired, and rechecked. See `tests/manual_checklist.md`. |
 
 ### F13. Three identical specimens produce a spurious component
 
@@ -259,3 +259,18 @@ No follow-up round was run.
 ## Sign-off
 
 2026-11-17. The author (Carl Lipo) signed off on this ledger with F12 open and deferred to him. He accepted build notes (d) the midline rule, (e) global detection controls with per-image crop, scale, and landmarks, and (f) the merge tolerance. The repairs are in commit daa5cf1. The app is not to be used on real images or deployed until the manual browser checklist in `tests/manual_checklist.md` is completed. No repair-check audit of commit daa5cf1 has been run.
+
+## Addendum, 2026-11-17: browser checklist and changes after sign-off
+
+At the author's instruction the app was deployed to a separate test address
+(`bifaceAnalysis-test` on shinyapps.io) and the manual checklist was run there
+in Chrome. The live app `bifaceAnalysis` was not changed. The first pass found
+four defects that neither the tests nor the audit could detect because they
+concern layout and pointer behaviour: a layout shift between two clicks, a
+missing warning for an artifact cut by the crop, figures compressed to the
+window height, and specimen pickers that opened empty. Each was repaired and
+rechecked in the browser, and `Rscript tests/testthat.R` completes with no
+failure. The repairs are described in `tests/manual_checklist.md` and in build
+note (k) of the specification. These changes were made after the audited
+commit and after the repairs in daa5cf1. No repair-check audit has been run on
+either set of changes.

@@ -640,3 +640,10 @@ two merges that bound the chosen number of clusters differ in height.
 resolution and resized by factors 1 and 0.5, which is the case the shared scale
 is designed for. The same image stored at two resolutions has two different
 original scales and is not a valid use of a shared scale.
+(k) Changes after the browser checklist (2026-11-17). Messages about the
+outline are shown below the image so that the image does not move between two
+clicks. The page scrolls and is not fitted to the window height. The specimen
+pickers select the first specimen when they have no valid selection. Section
+6.1 gains one warning: when the selected region is interior and regions at
+least four times its area touch the border in both brightness classes, the
+app states that the artifact may be cut off by the image or crop edge.

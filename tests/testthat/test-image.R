@@ -91,3 +91,15 @@ test_that("a crop outside the image gives a message", {
   p <- process_image(img, crop = c(-30, 1000, -30, 1000), direction = "left")     # larger than the image: clipped
   expect_true(p$ok); expect_identical(dim(p$mask), c(img$width, img$height)); expect_equal(p$mask_origin, c(0, 0))
 })
+
+test_that("an artifact cut by the crop edge is reported when a small interior object is selected instead", {
+  img <- load_working_image(DEMO_FILES[["artifact1"]])
+  whole <- process_image(img, direction = "left")
+  bb <- apply(whole$outline_plot, 2, range)
+  cut <- process_image(img, crop = c(mean(bb[, 1]), bb[2, 1] + 12, bb[1, 2] - 12, bb[2, 2] + 12), direction = "left")
+  expect_true(any(grepl("may be cut off", cut$warnings)))
+  if (!is.null(cut$mask)) expect_lt(sum(cut$mask), 0.25 * sum(whole$mask))    # what was outlined is not the artifact
+  for (f in DEMO_FILES) expect_length(segment_image(load_working_image(f)$gray)$warnings, 0)
+  g <- matrix(0.1, 120, 100); g[40:80, 30:70] <- 0.9; g[, 1:8] <- 0.9          # artifact larger than nothing on the border but the band
+  expect_false(any(grepl("may be cut off", segment_image(g)$warnings)))
+})

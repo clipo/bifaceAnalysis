@@ -130,10 +130,23 @@ segment_image <- function(gray, threshold = NULL, polarity = c("auto", "light", 
     }
   }
 
+  # A cut-off artifact: the selected region is interior, but regions at least
+  # four times its size touch the border in both brightness classes. One of
+  # them is the background. The other is a large object that the edge of the
+  # image or crop cuts through, which is likely to be the artifact itself.
+  cut_off <- FALSE
+  if (best$interior && length(candidates) == 2L) {
+    big_on_border <- vapply(candidates, function(cand)
+      any(cand$table$touches_border & cand$table$area >= 4 * best$area), logical(1))
+    cut_off <- all(big_on_border)
+  }
+
   warnings <- character(0)
   frac <- mean(mask)
   if (!best$interior)
     warnings <- c(warnings, "Every detected region touches the edge of the image or crop, so the artifact may be cut off or merged with the background. Redraw the crop so that background surrounds the artifact.")
+  if (cut_off)
+    warnings <- c(warnings, "Much larger light and dark regions both touch the edge of the image or crop, so the artifact may be cut off and the outlined object may be something else, such as an inked number. Redraw the crop so that background surrounds the whole artifact.")
   if (frac < 0.01)
     warnings <- c(warnings, "The detected artifact covers less than 1 percent of the image or crop. Crop closer to the artifact.")
   if (frac > 0.90)

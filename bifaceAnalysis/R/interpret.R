@@ -20,7 +20,7 @@ text_sample <- function(n) {
 text_outlines <- function(n, symmetrized) {
   c(text_sample(n)[1],
     "Each outline was turned so its tip points up, then divided at the tip and at the base into a left and a right edge. Each edge is represented by 100 points spaced evenly along its length, so the point 30 steps from the tip, for example, is 30 percent of the way along the edge on every specimen.",
-    "The overlay shows all specimens after Procrustes alignment, which removes differences in position, size, and rotation. What remains is difference in shape. The black line is the mean shape. Where the coloured lines spread apart, the specimens differ.",
+    "The overlay shows all specimens after Procrustes alignment, which removes differences in position, size, and rotation. What remains is difference in shape. The black line is the mean shape. Where the thin lines spread apart, the specimens differ.",
     if (symmetrized) "The shapes shown were made symmetric by averaging each one with its mirror image. Measurements and saved outlines are not changed by this option." else
       "Left and right in these plots depend on which face of the artifact was photographed. Differences between the two edges are therefore not comparable from specimen to specimen unless every artifact was photographed with a consistent face up.")
 }

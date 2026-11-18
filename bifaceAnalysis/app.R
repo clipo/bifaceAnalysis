@@ -15,7 +15,7 @@ DEMO_DIRECTION <- "left"
 IMAGE_PATTERN <- "(?i)\\.(jpe?g|png)$"
 
 how_to_read <- function(id) {
-  card(card_header("How to read this"), card_body(uiOutput(id), class = "small"))
+  card(card_header("How to read this"), card_body(uiOutput(id), class = "small", fillable = FALSE), fill = FALSE)
 }
 
 paragraphs <- function(x) tagList(lapply(x[nzchar(x)], tags$p))
@@ -29,6 +29,9 @@ result_row <- function(plot_id, text_id, height = "440px") {
 ui <- page_navbar(
   title = "Biface outline analysis",
   id = "nav",
+  # The page scrolls. Figures keep their stated heights and text is never cut
+  # off to fit the window.
+  fillable = FALSE,
   theme = bs_theme(version = 5, primary = "#0072B2"),
   header = tags$head(tags$style(HTML(
     ".small p { margin-bottom: 0.6rem; }
@@ -116,12 +119,14 @@ ui <- page_navbar(
         actionButton("save_spec", "Save outline and go to next image", class = "btn-primary"),
         textOutput("saved_text")
       ),
-      uiOutput("outline_warnings"),
       layout_columns(
         col_widths = c(8, 4),
+        # Messages are shown below the image so that the image does not move
+        # under the pointer when a message appears between two clicks.
         card(card_header("Image with detected outline"),
              plotOutput("image_plot", height = "480px", click = "img_click",
-                        brush = brushOpts("img_brush", resetOnNew = TRUE))),
+                        brush = brushOpts("img_brush", resetOnNew = TRUE)),
+             uiOutput("outline_warnings")),
         div(
           card(card_header("Detected region (mask)"),
                plotOutput("mask_plot", height = "170px"),
@@ -540,8 +545,10 @@ server <- function(input, output, session) {
     ids <- names(rv$specimens)
     nm <- vapply(unname(rv$specimens), function(s) s$name, character(1))
     ch <- if (length(ids)) stats::setNames(ids, nm) else character(0)
-    updateSelectInput(session, "edit_which", choices = ch, selected = isolate(input$edit_which))
-    updateSelectInput(session, "recon_which", choices = unname(nm), selected = isolate(input$recon_which))
+    # Keep the current choice when it still exists; otherwise choose the first.
+    keep <- function(current, options) if (length(current) == 1L && current %in% options) current else if (length(options)) options[[1]] else character(0)
+    updateSelectInput(session, "edit_which", choices = ch, selected = keep(isolate(input$edit_which), ids))
+    updateSelectInput(session, "recon_which", choices = unname(nm), selected = keep(isolate(input$recon_which), unname(nm)))
   })
   edited <- reactive({
     id <- input$edit_which
