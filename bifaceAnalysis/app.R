@@ -788,6 +788,9 @@ server <- function(input, output, session) {
     coll_map = reactive({
       need_coll()
       validate(need(!is.null(rv$locations), "Load a locations file to draw a map of the collections."))
+      # Named directly so that deployment installs maps: ggplot2::map_data uses it
+      # without declaring it, so the dependency scan does not otherwise find it.
+      validate(need(requireNamespace("maps", quietly = TRUE), "The map needs the R package maps, which is not installed on this server."))
       w <- coll_window(); validate(need(isTRUE(w$ok), w$reason))
       loc <- coll_loc()$located; sm <- coll_summary()
       v <- map_value()

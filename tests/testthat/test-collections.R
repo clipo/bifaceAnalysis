@@ -418,3 +418,11 @@ test_that("map plots build for 2, 3, 6, and 9 collections, and clipped windows a
   expect_equal(diff(w1$ylim), 0.5); expect_equal(diff(w1$xlim), 14)
 })
 
+
+test_that("the deployment dependency scan finds every package the app needs at run time", {
+  skip_if_not_installed("renv")
+  found <- renv::dependencies(APP_DIR, quiet = TRUE)$Package
+  # maps is used only through ggplot2::map_data, so it must be named in the app
+  # for shinyapps.io to install it (found missing on the test server, 2026-11-18).
+  expect_true(all(c("shiny", "bslib", "ggplot2", "imager", "scales", "maps") %in% found))
+})
