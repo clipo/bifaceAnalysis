@@ -5,6 +5,6 @@ account: lipolab
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 14301813
-bundleId: 12838696
+bundleId: 12839060
 url: https://lipolab.shinyapps.io/bifaceAnalysis/
 version: 1
