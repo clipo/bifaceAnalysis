@@ -75,7 +75,12 @@ test_that("saving replaces a specimen for the same image and advances", {
     expect_identical(n_spec(), 1L)
     expect_identical(rv$specimens[["artifact1.jpg"]]$name, "renamed")
     expect_match(rv$last_saved, "^Replaced")
-    session$setInputs(edit_which = "artifact1.jpg", edit_name = "again", edit_group = "  g2 ", edit_apply = 1)
+    # Boxes that still hold another specimen's values are not applied.
+    session$setInputs(edit_which = "artifact1.jpg", edit_for = "other.jpg", edit_name = "stale", edit_group = "stale", edit_apply = 1)
+    expect_identical(rv$specimens[["artifact1.jpg"]]$name, "renamed")
+    expect_identical(unname(groups()), "g1")
+    session$setInputs(edit_which = "artifact1.jpg", edit_for = "artifact1.jpg", edit_name = "again", edit_group = "  g2 ", edit_apply = 2)
+    expect_identical(rv$specimens[["artifact1.jpg"]]$name, "again")
     expect_identical(unname(groups()), "g2")                  # trimmed when edited
     session$setInputs(edit_remove = 1)
     expect_identical(n_spec(), 0L)
@@ -580,7 +585,7 @@ test_that("only rendered outputs compute the collection statistics, never an obs
     session$setInputs(load_outlines = upload(collection_csv()))
     session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "C,41,-77")))
     id <- names(rv$specimens)[1]
-    session$setInputs(edit_which = id, edit_name = "renamed", edit_group = "B", edit_apply = 1)
+    session$setInputs(edit_which = id, edit_for = id, edit_name = "renamed", edit_group = "B", edit_apply = 1)
     expect_identical(rv$specimens[[id]]$group, "B")
     expect_gt(calls, 0L)                  # the wrapper is the copy the app calls
     expect_identical(outside, 0L)

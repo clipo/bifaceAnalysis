@@ -151,6 +151,8 @@ ui <- page_navbar(
         selectInput("edit_which", "Specimen", choices = character(0)),
         textInput("edit_name", "Name"),
         textInput("edit_group", "Group label"),
+        # Not shown: the specimen whose values the two boxes above hold.
+        div(style = "display: none;", textInput("edit_for", NULL)),
         div(actionButton("edit_apply", "Apply changes", class = "btn-primary btn-sm"),
             actionButton("edit_remove", "Remove this specimen", class = "btn-outline-danger btn-sm")),
         hr(),
@@ -589,10 +591,18 @@ server <- function(input, output, session) {
     req(s)
     updateTextInput(session, "edit_name", value = s$name)
     updateTextInput(session, "edit_group", value = s$group)
+    updateTextInput(session, "edit_for", value = isolate(input$edit_which))
   })
   observeEvent(input$edit_apply, {
     id <- input$edit_which
     req(id, rv$specimens[[id]])
+    # The boxes are filled by the server after a specimen is chosen. While the
+    # server is busy they still hold the previous specimen's values, and applying
+    # them would overwrite the newly chosen specimen with those values.
+    if (!identical(input$edit_for, id)) {
+      notify("The name and label boxes had not yet updated for this specimen. Nothing was changed. Check the boxes and apply again.", "warning")
+      return()
+    }
     rv$specimens[[id]]$name <- unique_specimen_name(input$edit_name, rv$specimens[setdiff(names(rv$specimens), id)])
     rv$specimens[[id]]$group <- trimws(input$edit_group)
   })
