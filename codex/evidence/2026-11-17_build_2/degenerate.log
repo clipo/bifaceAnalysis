@@ -1,0 +1,61 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+
+Attaching package: ‘bslib’
+
+The following object is masked from ‘package:utils’:
+
+    page
+
+PCA rank: 0 
+Observed share: NA 
+Group A max absolute difference from its first row: 0 no_variation: TRUE row_variance: 2.82118644197349e-37 
+Group B max absolute difference from its first row: 0 no_variation: TRUE row_variance: 2.82118644197349e-37 
+Full text:
+ The comparison uses 2 collections with 6 specimens in total: A (3) and B (3).
+The plot shows the mean outline of each collection, rebuilt from the mean of its specimens' Fourier coefficients.
+The specimens in these collections have identical outlines, so no share of variation can be computed.
+The raw distance between two collection means is larger on average than the distance between the means of the populations they were drawn from, because each mean carries sampling error. The corrected distance subtracts the expected size of that error. It assumes that specimens are independent of one another and does not account for the alignment and the number of harmonics having been fitted to these same specimens.
+The corrected distance is 0 for A and B: their raw distance is no larger than sampling error of the expected size produces. This does not show that the collections have the same mean shape.
+There is 1 pair of collections. Pairs that share a collection are not independent of one another, and with several pairs an observed distance can fall outside its grey range through sampling alone.
+Shape variance within collections is largest in A and smallest in A, a ratio of 1.0 to 1. Variance from 3 to 5 specimens is imprecise. The bars show how much it changes when one specimen is left out; they are not intervals.
+Colour the PCA plot by group label to see the specimens of each collection in the space of the principal components. 
+Rendered coll_means 
+Message/error coll_share The specimens in these collections have identical outlines. 
+Rendered coll_pairs 
+Rendered coll_matrix 
+Rendered coll_within 
+PCA rank: 1 
+Observed share: 1 
+Group A max absolute difference from its first row: 0 no_variation: TRUE row_variance: 4.5623235653455283e-66 
+Group B max absolute difference from its first row: 0 no_variation: TRUE row_variance: 2.8888949165808538e-34 
+Full text:
+ The comparison uses 2 collections with 6 specimens in total: A (3) and B (3).
+The plot shows the mean outline of each collection, rebuilt from the mean of its specimens' Fourier coefficients.
+Of the total variation in outline shape among these specimens, 100.0% lies between the collection means and the rest within collections. If specimens were assigned to collections at random with the same sizes, the expected share would be 20.0% (the number of collections minus 1, divided by the number of specimens minus 1). Random reassignment gave shares from 11.1% to 100.0% (central 95% of values).
+The raw distance between two collection means is larger on average than the distance between the means of the populations they were drawn from, because each mean carries sampling error. The corrected distance subtracts the expected size of that error. It assumes that specimens are independent of one another and does not account for the alignment and the number of harmonics having been fitted to these same specimens.
+There is 1 pair of collections. Pairs that share a collection are not independent of one another, and with several pairs an observed distance can fall outside its grey range through sampling alone.
+Shape variance within collections is largest in B and smallest in A, a ratio of 63320693396766192788713188098048.0 to 1. Variance from 3 to 5 specimens is imprecise. The bars show how much it changes when one specimen is left out; they are not intervals.
+Colour the PCA plot by group label to see the specimens of each collection in the space of the principal components. 
+Rendered coll_means 
+Rendered coll_share 
+Rendered coll_pairs 
+Rendered coll_matrix 
+Rendered coll_within 
+PCA rank: 2 
+Observed share: 0 
+Group A max absolute difference from its first row: 0.0034890430762567828 no_variation: FALSE row_variance: 3.6013127121248201e-06 
+Group B max absolute difference from its first row: 0.0034890430762567828 no_variation: FALSE row_variance: 3.6013127121248201e-06 
+Full text:
+ The comparison uses 2 collections with 6 specimens in total: A (3) and B (3).
+The plot shows the mean outline of each collection, rebuilt from the mean of its specimens' Fourier coefficients.
+Of the total variation in outline shape among these specimens, 0.0% lies between the collection means and the rest within collections. If specimens were assigned to collections at random with the same sizes, the expected share would be 20.0% (the number of collections minus 1, divided by the number of specimens minus 1). Random reassignment gave shares from 0.0% to 66.7% (central 95% of values).
+The raw distance between two collection means is larger on average than the distance between the means of the populations they were drawn from, because each mean carries sampling error. The corrected distance subtracts the expected size of that error. It assumes that specimens are independent of one another and does not account for the alignment and the number of harmonics having been fitted to these same specimens.
+The corrected distance is 0 for A and B: their raw distance is no larger than sampling error of the expected size produces. This does not show that the collections have the same mean shape.
+There is 1 pair of collections. Pairs that share a collection are not independent of one another, and with several pairs an observed distance can fall outside its grey range through sampling alone.
+Shape variance within collections is largest in A and smallest in A, a ratio of 1.0 to 1. Variance from 3 to 5 specimens is imprecise. The bars show how much it changes when one specimen is left out; they are not intervals.
+Colour the PCA plot by group label to see the specimens of each collection in the space of the principal components. 
+Rendered coll_means 
+Rendered coll_share 
+Rendered coll_pairs 
+Rendered coll_matrix 
+Rendered coll_within 

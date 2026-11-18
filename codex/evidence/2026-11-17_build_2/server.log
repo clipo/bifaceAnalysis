@@ -1,0 +1,52 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+
+Attaching package: ‘bslib’
+
+The following object is masked from ‘package:utils’:
+
+    page
+
+Empty CSV dl_coll_summary : "collection","n","pc1_mean","pc2_mean","pc3_mean","length_width_mean","max_width_position_mean","within_variance","length_mm_mean","located" 
+Empty CSV dl_coll_dist : "collection_a","collection_b","n_a","n_b","raw_distance","reference_mean","reference_low","reference_high","corrected_square","corrected_distance","distance_km" 
+Rank 0 coll_means plot 
+Rank 0 coll_share message 
+Rank 0 coll_pairs plot 
+Rank 0 coll_matrix plot 
+Rank 0 coll_within plot 
+Rank 0 coll_map plot 
+Rank 0 coll_geo message 
+Rank 0 within variances: 2.821186e-37 2.821186e-37  map choices: length_width_mean max_width_position_mean within_variance n length_mm_mean 
+Rank 0 summary CSV: "collection","n","pc1_mean","pc2_mean","pc3_mean","length_width_mean","max_width_position_mean","within_variance","length_mm_mean","located" | "A",3,,,,3.33333333333333,0.4975,2.82118644197349e-37,2,TRUE | "B",3,,,,3.33333333333333,0.4975,2.82118644197349e-37,2,TRUE 
+Rank 1 coll_means plot 
+Rank 1 coll_share plot 
+Rank 1 coll_pairs plot 
+Rank 1 coll_matrix plot 
+Rank 1 coll_within plot 
+Rank 1 coll_map plot 
+Rank 1 coll_geo message 
+Rank 1 within variances: 4.562324e-66 2.888895e-34  map choices: pc1_mean length_width_mean max_width_position_mean within_variance n length_mm_mean 
+Rank 1 summary CSV: "collection","n","pc1_mean","pc2_mean","pc3_mean","length_width_mean","max_width_position_mean","within_variance","length_mm_mean","located" | "A",3,-0.00452771768143036,,,3.33333333333333,0.4975,4.56232356534553e-66,2,TRUE | "B",3,0.00452771768143036,,,2.5,0.4975,2.88889491658085e-34,2,TRUE 
+Nine special-name collections coll_means plot 
+Nine special-name collections coll_share plot 
+Nine special-name collections coll_pairs plot 
+Nine special-name collections coll_matrix plot 
+Nine special-name collections coll_within plot 
+Nine special-name collections coll_map plot 
+Nine special-name collections coll_geo plot 
+Interleaved full-matrix/PC/measurement/download alignment verified; eligible rows= 1,2,3,4,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,26,27,28,29,30  H= 7  rank= 7 
+Random geography sentence: The correlation between corrected shape distance and geographic distance is 1.00. Reassigning the positions among the collections (999 assignments, all possible) gave values from -0.26 to 0.40 (central 95%), with a mean of -0.00. 
+No matching names: The map needs at least 2 located collections. | Collections without a location: <A>&, 007, A,B, G7, G8, G9, NA, P% and Q"R. | Rows of the locations file that match no collection in the comparison: unknown. Names must match the group labels exactly. 
+Identical collection means corrected distance= 0 
+PDF with-map pages= 24 
+PDF without-map pages= 23 
+Map-off report has geographic-coordinate caution: FALSE  sample-mean map caution: FALSE 
+PDF no-locations pages= 23 
+No-location report has geographic-coordinate caution: FALSE 
+Withheld map: The map is not drawn because a location lies beyond 80 degrees of latitude, where this map projection is strongly distorted. Distances and other results are not affected. 
+Warning messages:
+1: Removed 2 rows containing missing values or values outside the scale range
+(`geom_segment()`). 
+2: Removed 1 row containing missing values or values outside the scale range
+(`geom_point()`). 
+Performance 120 x 120 share + pair + within elapsed: 0.437 seconds
+All additional server checks completed.

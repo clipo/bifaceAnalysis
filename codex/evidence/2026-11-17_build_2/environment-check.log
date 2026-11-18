@@ -1,0 +1,21 @@
+Final optional report-validation command, attempted from codex/:
+
+python3 - <<'PY'
+from pathlib import Path
+r=Path('audits/2026-11-17_build_2_report.md').read_text()
+assert '\u2014' not in r
+for line in r.splitlines():
+    if line.startswith('- `') and ('2026-11-17_build_2/' in line or '2026-11-17_build_2_report' in line):
+        p=line.split('`')[1]
+        assert Path(p).exists(), p
+print('Report written; all listed durable evidence files exist; no em dashes.')
+PY
+
+Shell output:
+zsh:1: can't create temp file for here document: operation not permitted
+
+Python did not execute. The check was not rerun by another route.
+The independent following git diff --exit-code command produced no output.
+
+Previously executed pdftotext -v:
+pdftotext version 26.11.0

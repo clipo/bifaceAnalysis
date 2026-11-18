@@ -1,0 +1,53 @@
+OMP: Warning #179: Function Can't set size of /tmp file failed:
+HEAD: beedd0415ebbfad8c2e2c7c2f39c99c652c40290 
+ R version 4.6.2 (2026-10-29) 
+testthat 3.3.2 
+shiny 1.14.0 
+bslib 0.12.0 
+ggplot2 4.0.3 
+maps 3.4.4 
+scales 1.4.0 
+imager 1.0.8 
+cluster 2.1.8.3 
+Independent partition: SST= 160.2222222222222  SSB= 77.55555555555554  SSW= 82.66666666666666  share= 0.4840499306518723 
+Share random reference mean/low/high: 0.2467877030983826 0.0429958391123436 0.5880721220527045  analytical expectation= 0.25 
+Independent pair A B : d2= 36.11111111111111  vA= 5  vB= 6.333333333333334  Q= 32.33333333333333  dc= 5.686240703077327 
+Independent pair A C : d2= 41  vA= 5  vB= 30  Q= 29.33333333333334  dc= 5.416025603090641 
+Independent pair B C : d2= 0.4444444444444449  vA= 6.333333333333334  vB= 30  Q= -11.66666666666667  dc= 0 
+Pair reference independently reproduced; enumeration max= 6.009252125773315 
+Correlation G= 5  r= 0.347822001268706  assignments= 120  ref mean/low/high= -9.251858538542971e-18 -0.542358332141464 0.6279123534703296 
+Each point is a pair of collections: 5 located collections give 10 pairs. Pairs that share a collection are not independent, so the points are not independent observations.
+The correlation between corrected shape distance and geographic distance is 0.35. Reassigning the positions among the collections (120 assignments, all possible) gave values from -0.54 to 0.63 (central 95%), with a mean of -0.00.
+With a few locations, any pattern here can arise from the particular collections sampled. A few locations cannot establish a spatial pattern. Rounded or approximate coordinates change the geographic distances. 
+Correlation G= 7  r= 0.6227567399105193  assignments= 5040  ref mean/low/high= -9.251858538542971e-19 -0.3225890594882362 0.5587415368414448 
+Each point is a pair of collections: 7 located collections give 21 pairs. Pairs that share a collection are not independent, so the points are not independent observations.
+The correlation between corrected shape distance and geographic distance is 0.62. Reassigning the positions among the collections (5040 assignments, all possible) gave values from -0.32 to 0.56 (central 95%), with a mean of -0.00.
+With a few locations, any pattern here can arise from the particular collections sampled. A few locations cannot establish a spatial pattern. Rounded or approximate coordinates change the geographic distances. 
+Correlation G= 8  r= 0.7079475323054896  assignments= 999  ref mean/low/high= -0.002248131082778857 -0.312851564531738 0.4734213789101156 
+Each point is a pair of collections: 8 located collections give 28 pairs. Pairs that share a collection are not independent, so the points are not independent observations.
+The correlation between corrected shape distance and geographic distance is 0.71. Reassigning the positions among the collections (999 assignments, all possible) gave values from -0.31 to 0.47 (central 95%), with a mean of -0.00.
+With a few locations, any pattern here can arise from the particular collections sampled. A few locations cannot establish a spatial pattern. Rounded or approximate coordinates change the geographic distances. 
+RNG preserved present/absent; repeatable: share 
+RNG preserved present/absent; repeatable: pair 
+RNG preserved present/absent; repeatable: geo5 
+RNG preserved present/absent; repeatable: geo7 
+RNG preserved present/absent; repeatable: geo8 
+RNG preserved present/absent; repeatable: zero_share 
+RNG preserved present/absent; repeatable: too_few 
+RNG preserved present/absent; repeatable: coincident 
+RNG preserved present/absent; repeatable: zero_shape 
+RNG preserved present/absent; repeatable: error 
+Map fixture coincident  bounds= 41.75 42.25 -76.3364081824016 -75.6635918175984  backgrounds= world state county  bar km= 10 
+Map fixture lon_only  bounds= 41.75 42.25 -82 -68  backgrounds= world state county  bar km= 200 
+Map fixture lat_only  bounds= 39.2 44.8 -76.3364081824016 -75.6635918175984  backgrounds= world state  bar km= 10 
+Map fixture high  bounds= 78.90000000000001 79.59999999999999 8 22  backgrounds= world  bar km= 50 
+Map fixture clipping  bounds= -85 85 -180 -168.2  backgrounds= world  bar km= 200 
+Map fixture outside  bounds= 49.6 52.4 4.4 8.6  backgrounds= world  bar km= 50 
+Map fixture straddle  bounds= 47.2 52.8 -132 -118  backgrounds= world state  bar km= 200 
+Build note (a): 1000 km along parallel 60 degrees; endpoint haversine= 996.9156797055513  discrepancy percent= 0.3084320294448717 
+Pair label collision: pairs= 6  distinct plotted y rows= 5  labels= A and A and B | A and B and C | A and C | A and B and B and C | A and B and C | B and C and C 
+BEGIN MUTATION: pair references all zero
+.............................................................................................................................................................
+══ DONE ════════════════════════════════════════════════════════════════════════
+END MUTATION
+All independent numeric checks completed.

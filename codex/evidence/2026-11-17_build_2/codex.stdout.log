@@ -1,0 +1,130 @@
+{
+  "summary": "Audited commit beedd0415ebbfad8c2e2c7c2f39c99c652c40290 against the collections specification. The full test suite passed, and independent calculations confirmed the principal formulas, references, RNG restoration, and data alignment. Acceptance is blocked by a numerical-zero defect that reports an enormous variance ratio for collections containing identical specimens.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/R/collections.R:82; bifaceAnalysis/R/interpret.R:188-192",
+      "claim": "Constant collections receive zero variance and the corresponding no-variation explanation.",
+      "problem": "Floating-point centring residue produces positive variances for exactly identical coefficient rows. The text treats these residues as genuine variation and divides them, producing a meaningless ratio.",
+      "evidence": "The server reproduction gave within-collection row differences of exactly 0, but variances 4.5623235653455283e-66 and 2.8888949165808538e-34. The generated text reported 'a ratio of 63320693396766192788713188098048.0 to 1.' See degenerate.log.",
+      "repair": "Apply consistent numerical-zero handling to within-collection and leave-one-out variance, then use those values throughout summaries, corrections, and interpretation.",
+      "acceptance_check": "Duplicate non-integer coefficient rows and duplicate outlines must yield zero variances and leave-one-out ranges, with no ratio. Mixed constant/varying collections must select the mixed-zero explanation.",
+      "supersedes": ""
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/R/interpret.R:201-203",
+      "claim": "The geography reference uses all possible assignments whenever n_assignments <= 5040.",
+      "problem": "The random branch returns 999 assignments, which satisfies this condition. References for eight or more collections are therefore incorrectly described as complete enumeration.",
+      "evidence": "The condition is `if (geo$n_assignments <= 5040) \", all possible\"`. Independent eight-collection and server nine-collection fixtures both produced '999 assignments, all possible'.",
+      "repair": "Return an explicit enumeration/random method field from shape_geo_correlation and use it in the interpretation.",
+      "acceptance_check": "Five and seven collections report complete enumeration with 120 and 5040 assignments; eight and nine report 999 random assignments in both tab and PDF text.",
+      "supersedes": ""
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/R/plots.R:325,344-346",
+      "claim": "Each collection pair occupies its own row in the pair-reference plot.",
+      "problem": "Pasted display labels are also categorical identifiers. Distinct pairs whose names contain 'and' can collapse onto one plotted row.",
+      "evidence": "Names A, B and C, A and B, and C produce six pairs but five distinct plotted y positions. Both (A, B and C) and (A and B, C) become 'A and B and C'. Reproduced in numeric.log.",
+      "repair": "Use unique pair identifiers independently of display labels, and disambiguate names in labels.",
+      "acceptance_check": "The four-name fixture produces six distinct rows, each with its own correctly matched observation and reference.",
+      "supersedes": ""
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "classification": "not_demonstrated",
+      "location": "tests/testthat/test-collections.R:97-105,165-192,232-266; tests/testthat/test-server.R:428-464",
+      "claim": "The tests establish the section-10 acceptance requirements.",
+      "problem": "The pair-reference oracle is insufficient, and several required branches and outputs lack tests. These include random geography assignments, pair/geography RNG preservation, eligible rank transitions, pipeline zero-variance states, and complete report content.",
+      "evidence": "The pair-reference assertion is only `expect_lte(ab$reference_high, max(stats::dist(pool)))`. An audit mutation replacing every pair-reference mean and limit with zero passed every collections unit test. The rank-selector test never removes a component; the report test checks only a decrease in page count.",
+      "repair": "Add independent reference-value oracles and regression tests for the missing branches, state transitions, CSV contents, plot identities, and report sections/cautions. The report inventories the remaining gaps.",
+      "acceptance_check": "The zero-reference mutation and corresponding branch/output mutations must fail targeted tests; the corrected full suite must pass with maps installed.",
+      "supersedes": ""
+    },
+    {
+      "id": "F5",
+      "severity": "minor",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/R/interpret.R:148-155,189-204; bifaceAnalysis/app.R:973-981",
+      "claim": "Required standing and variance cautions remain present in supported states.",
+      "problem": "The standing map/sample-mean and approximate-coordinate cautions are absent from COLLECTION_CAUTIONS and depend on conditional sections. The small-sample and leave-one-out explanations also disappear when any variance is zero.",
+      "evidence": "The two-collection report with the map unticked contained neither geographic caution; server.log records both checks as FALSE. The variance explanation is inside `if (all(v > 0))`.",
+      "repair": "Include all standing cautions unconditionally and move variance precision/sensitivity explanations outside the ratio branch.",
+      "acceptance_check": "Check tab and PDF text with no locations, a withheld map, the map box off, and positive/mixed/all-zero variances.",
+      "supersedes": ""
+    },
+    {
+      "id": "F6",
+      "severity": "minor",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/app.R:855-863",
+      "claim": "The displayed pair table contains the outputs specified in section 5.3.",
+      "problem": "The table omits the signed corrected square Q, although the CSV includes it.",
+      "evidence": "The table constructs Raw distance, Reference, and Corrected distance columns but never includes `pr$corrected_square`.",
+      "repair": "Add a labelled corrected-square column.",
+      "acceptance_check": "A negative-Q fixture displays its negative corrected square alongside corrected distance 0 in both table and CSV.",
+      "supersedes": ""
+    },
+    {
+      "id": "F7",
+      "severity": "minor",
+      "classification": "wrong",
+      "location": "bifaceAnalysis/app.R:213-236,846-852",
+      "claim": "With fewer than two eligible collections, the tab shows only the short explanation.",
+      "problem": "Only the introductory text switches state. Plot containers, table, Locations controls, and cautions remain unconditional, and multiple figure outputs repeat the explanation.",
+      "evidence": "The Collections UI constructs all content unconditionally; `coll_intro` alone tests `!coll_ready()`.",
+      "repair": "Condition the comparison content on eligibility, retaining one explanation while unavailable.",
+      "acceptance_check": "Browser or DOM checks show only the explanation with zero or one eligible collection and the complete comparison with two.",
+      "supersedes": ""
+    }
+  ],
+  "held": [
+    "Rscript tests/testthat.R completed successfully from the repository root with maps 3.4.4 installed; no test failures or skips were reported.",
+    "Independent partition: SST 160.2222222222222, SSB 77.55555555555554, SSW 82.66666666666666, share 0.4840499306518723. The seeded share reference also matched.",
+    "Independent Q values 32.33333333333333, 29.33333333333334, and -11.66666666666667 matched the implementation. Raw distances, ordinary-data variance divisors, clipping, pair-only pooling, and reference summaries were correct.",
+    "Haversine distances matched an independent spherical-vector calculation. Five-collection correlation was 0.347822001268706, and all 120 enumerated reference values matched. The eight-collection random reference also matched independently.",
+    "References preserved present and absent RNG states, including complete enumeration, random assignments, early returns, and an intentional error inside the seed helper.",
+    "Full-data alignment, H, coefficients, and PCA feed eligible-row statistics correctly. An interleaved server fixture verified summary/download values and special-character labels.",
+    "Locations rejection conditions, text parsing, replacement, rematching, templates, and clearing match the contract. Result CSV schemas, empty missing cells, header-only unavailable output, and coordinate exclusion were verified.",
+    "Map geometry, backgrounds, scale-bar selection and placement matched independent checks. Build note (a) is correct: 1000 km along the parallel at 60 degrees spans 996.9156797055513 km by haversine.",
+    "Rank-0/1 availability, selector fallback, unmatched locations, coincident positions, and withheld maps produced figures or messages without new reactive/download errors. F1 remains an interpretation error in those states.",
+    "The map checkbox removed the map section: 24 pages with it, 23 without. Nine-level colour/fill palettes passed. The statistics performance fixture took 0.437 seconds."
+  ],
+  "not_examined": [
+    "Browser layout and manual checklist C1 to C11 were not run; the checklist explicitly remains NOT YET RUN. No deployment or real collections were examined.",
+    "The author's unavailable mutation run was not used. Only the logged audit mutation was executed.",
+    "External literature, the README archival-date claim, and unbiasedness after fitted alignment/harmonic selection were not independently established.",
+    "PDF text and page counts were checked, but pages were not visually inspected. Two removed-row warnings from an auxiliary full-report run were logged but not traced; separately rendering the new degenerate collection figures did not reproduce them.",
+    "The project-root CLAUDE.md is absent.",
+    "A final optional Python report-validation here-document was blocked before execution: 'zsh:1: can't create temp file for here document: operation not permitted'. It was not rerun or worked around; see environment-check.log."
+  ],
+  "questions": [
+    "Who will run and record Collections checklist C1 to C11 on the test deployment after the repairs?"
+  ],
+  "evidence_files": [
+    "codex/audits/2026-11-17_build_2_report.md",
+    "codex/evidence/2026-11-17_build_2/check_numeric.R",
+    "codex/evidence/2026-11-17_build_2/numeric.log",
+    "codex/evidence/2026-11-17_build_2/check_server.R",
+    "codex/evidence/2026-11-17_build_2/server.log",
+    "codex/evidence/2026-11-17_build_2/check_degenerate.R",
+    "codex/evidence/2026-11-17_build_2/degenerate.log",
+    "codex/evidence/2026-11-17_build_2/test-suite.log",
+    "codex/evidence/2026-11-17_build_2/environment-check.log",
+    "codex/evidence/2026-11-17_build_2/data/commit-diff.txt",
+    "codex/evidence/2026-11-17_build_2/data/with-map.pdf",
+    "codex/evidence/2026-11-17_build_2/data/with-map.txt",
+    "codex/evidence/2026-11-17_build_2/data/without-map.pdf",
+    "codex/evidence/2026-11-17_build_2/data/without-map.txt",
+    "codex/evidence/2026-11-17_build_2/data/no-locations.pdf",
+    "codex/evidence/2026-11-17_build_2/data/no-locations.txt"
+  ]
+}
