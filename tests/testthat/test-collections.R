@@ -436,4 +436,8 @@ test_that("legend and axis text of the reference figures is wrapped for narrow p
     expect_true(any(grepl("\n", txt)))
     expect_silent(ggplot2::ggplot_build(p))
   }
+  wt <- within_table(d$X, d$g)
+  expect_true(all(nchar(strsplit(plot_within_variance(wt)$labels$x, "\n")[[1]]) <= REFERENCE_LABEL_WIDTH))
+  shapes <- stats::setNames(lapply(1:7, function(i) KITE * i), paste("Site", 1:7))
+  expect_identical(plot_collection_means(shapes)$guides$guides$colour$params$ncol, 3)
 })

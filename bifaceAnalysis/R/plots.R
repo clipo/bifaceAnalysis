@@ -317,10 +317,14 @@ plot_collection_means <- function(shapes) {
   df$collection <- factor(df$specimen, levels = names(shapes))
   ggplot2::ggplot(df, ggplot2::aes(x, y, group = collection, colour = collection)) +
     ggplot2::geom_path(linewidth = 0.9) + ggplot2::coord_equal() +
-    category_scale(df$collection, "colour", "Collection") + theme_shape()
+    category_scale(df$collection, "colour", "Collection") + theme_shape() +
+    # Three collections per legend row, with the title above, so that the legend
+    # is not clipped in a narrow plot.
+    ggplot2::guides(colour = ggplot2::guide_legend(ncol = 3, byrow = TRUE, title.position = "top"))
 }
 
 REFERENCE_LABEL_WIDTH <- 26L   # characters per line of legend and axis text
+wrap_label <- function(x) paste(strwrap(x, width = REFERENCE_LABEL_WIDTH), collapse = "\n")
 
 # Observed value(s) beside a reassignment reference, one row per item. Rows
 # are keyed by position, not by label, so items whose labels coincide (for
@@ -329,8 +333,7 @@ REFERENCE_LABEL_WIDTH <- 26L   # characters per line of legend and axis text
 reference_plot <- function(df, x_label, obs_label, ref_label, limits = NULL) {
   # Long legend and axis text is wrapped so that it is not clipped in a narrow
   # plot (phone width, or half of the report page).
-  wrap <- function(x) paste(strwrap(x, width = REFERENCE_LABEL_WIDTH), collapse = "\n")
-  x_label <- wrap(x_label); obs_label <- wrap(obs_label); ref_label <- wrap(ref_label)
+  x_label <- wrap_label(x_label); obs_label <- wrap_label(obs_label); ref_label <- wrap_label(ref_label)
   labels <- df$item
   dup <- labels %in% labels[duplicated(labels)]
   labels[dup] <- sprintf("%s (%d)", labels[dup], ave(seq_along(labels), labels, FUN = seq_along)[dup])
@@ -386,7 +389,7 @@ plot_within_variance <- function(within) {
     ggplot2::geom_point(ggplot2::aes(x = variance), size = 3.5) +
     category_scale(rev(levels(within$collection)), "colour", NULL) + ggplot2::guides(colour = "none") +
     ggplot2::expand_limits(x = 0) +
-    ggplot2::labs(x = "Shape variance within the collection (bar: range with one specimen left out)", y = NULL) + theme_app()
+    ggplot2::labs(x = wrap_label("Shape variance within the collection (bar: range with one specimen left out)"), y = NULL) + theme_app()
 }
 
 # Corrected shape distance against geographic distance, one point per pair.
@@ -396,7 +399,7 @@ plot_shape_geo <- function(pairs_km) {
     ggplot2::geom_point(colour = OKABE_ITO[1], size = 3) +
     ggplot2::geom_text(ggplot2::aes(label = label), vjust = -0.9, size = 3, family = "sans", colour = "grey30") +
     ggplot2::expand_limits(x = 0, y = 0) +
-    ggplot2::labs(x = "Geographic distance (km)", y = "Corrected distance between collection means") + theme_app()
+    ggplot2::labs(x = "Geographic distance (km)", y = wrap_label("Corrected distance between collection means")) + theme_app()
 }
 
 # Map of located collections coloured by a summary value.
