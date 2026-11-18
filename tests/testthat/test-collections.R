@@ -426,3 +426,14 @@ test_that("the deployment dependency scan finds every package the app needs at r
   # for shinyapps.io to install it (found missing on the test server, 2026-11-18).
   expect_true(all(c("shiny", "bslib", "ggplot2", "imager", "scales", "maps") %in% found))
 })
+
+test_that("legend and axis text of the reference figures is wrapped for narrow plots", {
+  set.seed(SEED)
+  d <- sim_groups(c(3, 3, 3), p = 4)
+  for (p in list(plot_pair_distances(pair_table(d$X, d$g, n_perm = 19)), plot_collection_share(share_reference(d$X, d$g, n_perm = 19)))) {
+    txt <- c(p$labels$x, p$scales$get_scales("colour")$labels)
+    expect_true(all(nchar(unlist(strsplit(txt, "\n"))) <= REFERENCE_LABEL_WIDTH))
+    expect_true(any(grepl("\n", txt)))
+    expect_silent(ggplot2::ggplot_build(p))
+  }
+})

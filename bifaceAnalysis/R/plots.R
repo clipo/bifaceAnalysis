@@ -320,11 +320,17 @@ plot_collection_means <- function(shapes) {
     category_scale(df$collection, "colour", "Collection") + theme_shape()
 }
 
+REFERENCE_LABEL_WIDTH <- 26L   # characters per line of legend and axis text
+
 # Observed value(s) beside a reassignment reference, one row per item. Rows
 # are keyed by position, not by label, so items whose labels coincide (for
 # example collections named "A and B" and "C", and "A" and "B and C") keep
 # separate rows; coinciding labels are numbered.
 reference_plot <- function(df, x_label, obs_label, ref_label, limits = NULL) {
+  # Long legend and axis text is wrapped so that it is not clipped in a narrow
+  # plot (phone width, or half of the report page).
+  wrap <- function(x) paste(strwrap(x, width = REFERENCE_LABEL_WIDTH), collapse = "\n")
+  x_label <- wrap(x_label); obs_label <- wrap(obs_label); ref_label <- wrap(ref_label)
   labels <- df$item
   dup <- labels %in% labels[duplicated(labels)]
   labels[dup] <- sprintf("%s (%d)", labels[dup], ave(seq_along(labels), labels, FUN = seq_along)[dup])
@@ -336,7 +342,8 @@ reference_plot <- function(df, x_label, obs_label, ref_label, limits = NULL) {
     ggplot2::geom_point(ggplot2::aes(x = observed, colour = "obs"), size = 3.5) +
     ggplot2::scale_colour_manual(values = c(obs = OKABE_ITO[5], ref = "grey55"), name = NULL,
                                  labels = c(obs = obs_label, ref = ref_label)) +
-    ggplot2::labs(x = x_label, y = NULL) + theme_app() + ggplot2::theme(legend.direction = "vertical")
+    ggplot2::labs(x = x_label, y = NULL) + theme_app() +
+    ggplot2::theme(legend.direction = "vertical", legend.justification = "left", legend.location = "plot", legend.text = ggplot2::element_text(lineheight = 0.9))
   if (!is.null(limits)) p <- p + ggplot2::scale_x_continuous(limits = limits)
   p
 }

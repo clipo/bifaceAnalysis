@@ -224,7 +224,8 @@ ui <- page_navbar(
                   layout_columns(col_widths = c(7, 5),
                                  card(plotOutput("coll_pairs_plot", height = "360px")),
                                  card(plotOutput("coll_matrix_plot", height = "360px"))),
-                  card(card_header("Distances between collection means"), tableOutput("coll_pair_table")),
+                  card(card_header("Distances between collection means"),
+                       div(style = "overflow-x: auto;", tableOutput("coll_pair_table"))),   # scrolls sideways on a narrow screen
                   card(card_header("Locations (optional)"),
                        p(class = "small", "A CSV file with the columns collection, latitude, and longitude (decimal degrees, north and east positive), one row per collection. Collection names must match the group labels exactly. Loading a new file replaces the previous one."),
                        p(class = "small", "The file is sent to the server and kept for this session only. Round or approximate the coordinates of protected sites before uploading. Approximate positions change the geographic distances."),
