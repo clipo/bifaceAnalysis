@@ -1,6 +1,6 @@
 # Load the app's functions and shared fixtures and shapes for the tests.
 APP_DIR <- normalizePath(testthat::test_path("..", "..", "bifaceAnalysis"))
-for (f in list.files(file.path(APP_DIR, "R"), full.names = TRUE)) source(f)
+for (f in list.files(file.path(APP_DIR, "R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 REF <- readRDS(testthat::test_path("..", "fixtures", "reference.rds"))
 DEMO_FILES <- list.files(file.path(APP_DIR, "www"), pattern = "(?i)\\.jpe?g$", full.names = TRUE)
 names(DEMO_FILES) <- tools::file_path_sans_ext(basename(DEMO_FILES))

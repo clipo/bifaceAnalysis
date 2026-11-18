@@ -68,3 +68,24 @@ Browsers other than Chrome, touch input, and a real phone were not tested.
 Item 15 and item 19 were checked through the download links and not through
 files saved by the browser. The author's own images were not used: the uploads
 were the sample images renamed and enlarged.
+
+## Collections (docs/specs/2026-11-17_collections_spec.md)
+
+Status: NOT YET RUN. To build collections from the sample images, upload each
+sample image three times under different file names and give each set a group
+label in step 2.
+
+| # | Check | Expected | Result |
+|---|-------|----------|--------|
+| C1 | Open the Collections tab with the demonstration | A short explanation of how collections are defined; no figure and no error | |
+| C2 | Three labelled collections of 3 | Mean shapes, share, pair distances, matrix, within-collection variance, pair table, and cautions appear with text | |
+| C3 | Add one unlabelled specimen and a collection of 2 | The membership sentence names what was left out | |
+| C4 | Download the locations template | One row per label, empty coordinates | |
+| C5 | Load a locations file for the collections | Map with labelled points coloured by the selected summary and a scale bar | |
+| C6 | Load a second file with fewer rows, then a file with a missing column | The second replaces the first; the faulty file gives a message and changes nothing | |
+| C7 | Rename a located collection in step 3 | The collection is listed as without a location and the file row as unmatched | |
+| C8 | Locations outside the United States, and one beyond 80 degrees | Country borders only; the second withholds the map with its reason | |
+| C9 | Change "Colour the map by", including a PC after removing specimens until that PC no longer exists | Colours and legend change; an unavailable choice returns to length / width | |
+| C10 | Download the report with the map box ticked and unticked | The map page appears only when ticked | |
+| C11 | Narrow the window to phone width on the Collections tab | Controls usable; no overlapping text | |
+

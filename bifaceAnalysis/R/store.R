@@ -191,6 +191,7 @@ specimens_from_csv <- function(path, max_specimens = 500L) {
   if (anyNA(df$id) || any(!nzchar(trimws(df$id))))
     stop("Every row of the outline file must have an id.")
   df$group[is.na(df$group)] <- ""
+  df$group <- trimws(df$group)    # labels are trimmed wherever they enter the app
   df$specimen[is.na(df$specimen)] <- ""
   ids <- unique(df$id)
   if (length(ids) > max_specimens) stop("The outline file holds more than ", max_specimens, " specimens.")

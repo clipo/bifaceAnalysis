@@ -186,7 +186,9 @@ ui <- page_navbar(
         downloadButton("dl_report", "Report (PDF)", class = "btn-primary btn-sm"),
         downloadButton("dl_meas", "Measurements (CSV)", class = "btn-sm"),
         downloadButton("dl_scores", "PC scores (CSV)", class = "btn-sm"),
-        downloadButton("dl_coef", "Fourier coefficients (CSV)", class = "btn-sm")
+        downloadButton("dl_coef", "Fourier coefficients (CSV)", class = "btn-sm"),
+        downloadButton("dl_coll_summary", "Collection summary (CSV)", class = "btn-sm"),
+        downloadButton("dl_coll_dist", "Collection distances (CSV)", class = "btn-sm")
       ),
       navset_card_tab(
         id = "results_tabs",
@@ -207,7 +209,31 @@ ui <- page_navbar(
                                  card(plotOutput("regions_plot", height = "320px")),
                                  card(plotOutput("pvar_plot", height = "320px")),
                                  card(plotOutput("rvar_plot", height = "320px"))),
-                  result_row("rv_plot", "regions_text", "340px"))
+                  result_row("rv_plot", "regions_text", "340px")),
+        nav_panel("Collections",
+                  card(card_body(uiOutput("coll_intro"))),
+                  result_row("coll_means_plot", "coll_text", "420px"),
+                  layout_columns(col_widths = c(6, 6),
+                                 card(plotOutput("coll_share_plot", height = "220px")),
+                                 card(plotOutput("coll_within_plot", height = "300px"))),
+                  layout_columns(col_widths = c(7, 5),
+                                 card(plotOutput("coll_pairs_plot", height = "360px")),
+                                 card(plotOutput("coll_matrix_plot", height = "360px"))),
+                  card(card_header("Distances between collection means"), tableOutput("coll_pair_table")),
+                  card(card_header("Locations (optional)"),
+                       p(class = "small", "A CSV file with the columns collection, latitude, and longitude (decimal degrees, north and east positive), one row per collection. Collection names must match the group labels exactly. Loading a new file replaces the previous one."),
+                       p(class = "small", "The file is sent to the server and kept for this session only. Round or approximate the coordinates of protected sites before uploading. Approximate positions change the geographic distances."),
+                       layout_columns(col_widths = c(6, 6),
+                                      fileInput("locations_file", "Load a locations file", accept = ".csv"),
+                                      div(downloadButton("dl_loc_template", "Download a locations template", class = "btn-sm"),
+                                          actionButton("clear_locations", "Clear locations", class = "btn-sm"))),
+                       selectInput("map_value", "Colour the map by", choices = c("Mean length / width" = "length_width_mean")),
+                       checkboxInput("map_in_report", "Include the map in the PDF report (the map shows the positions of the collections)", TRUE),
+                       plotOutput("coll_map", height = "480px"),
+                       uiOutput("coll_map_text", class = "small"),
+                       plotOutput("coll_geo_plot", height = "380px"),
+                       uiOutput("coll_geo_text", class = "small")),
+                  card(card_header("Before drawing conclusions"), uiOutput("coll_cautions", class = "small")))
       )
     )
   ),
@@ -254,7 +280,8 @@ server <- function(input, output, session) {
     uploads = NULL,          # data frame id, name, path of the current upload
     batch = 0L,              # number of uploads so far in this session
     shared_ppm = NULL,       # most recently set scale, in ORIGINAL pixels per mm
-    last_saved = ""
+    last_saved = "",
+    locations = NULL         # collection locations loaded for this session
   )
 
   notify <- function(msg, type = "message") showNotification(msg, type = type, duration = 6)
@@ -658,6 +685,66 @@ server <- function(input, output, session) {
     else list(values = NULL, name = NULL)
   })
 
+  # ---- collections ----------------------------------------------------------
+  # Specification: docs/specs/2026-11-17_collections_spec.md.
+  coll <- reactive({ req(n_spec() >= 2); collection_data(coefs(), groups()) })
+  coll_ready <- function() n_spec() >= 2 && length(coll()$eligible) >= 2
+  need_coll <- function() validate(need(coll_ready(), COLLECTIONS_HELP))
+  coll_stats <- reactive({
+    need_coll(); cd <- coll()
+    list(share = share_reference(cd$X, cd$group), pairs = pair_table(cd$X, cd$group),
+         within = within_table(cd$X, cd$group))
+  })
+  coll_loc <- reactive({ need_coll(); match_locations(rv$locations, coll()$eligible) })
+  coll_summary <- reactive({
+    cd <- coll(); st <- coll_stats()
+    scores <- if (n_spec() >= 3) pca()$scores[cd$rows, , drop = FALSE] else matrix(0, length(cd$rows), 0)
+    collection_summary(cd$group, scores, measurements()[cd$rows, , drop = FALSE],
+                       stats::setNames(st$within$variance, st$within$collection), coll_loc()$located$collection)
+  })
+  coll_window <- reactive({ loc <- coll_loc()$located; map_window(loc$latitude, loc$longitude) })
+  coll_geo <- reactive({
+    loc <- coll_loc()$located; pr <- coll_stats()$pairs
+    G <- nrow(loc)
+    if (G < 2) return(shape_geo_correlation(matrix(0, G, G), matrix(0, G, G), cbind(loc$latitude, loc$longitude)))
+    sd <- matrix(0, G, G, dimnames = list(loc$collection, loc$collection))
+    for (i in seq_len(nrow(pr))) if (all(c(pr$collection_a[i], pr$collection_b[i]) %in% loc$collection))
+      sd[pr$collection_a[i], pr$collection_b[i]] <- sd[pr$collection_b[i], pr$collection_a[i]] <- pr$corrected_distance[i]
+    shape_geo_correlation(sd, geo_distance_matrix(loc$latitude, loc$longitude, loc$collection), cbind(loc$latitude, loc$longitude))
+  })
+  coll_pairs_km <- reactive({
+    pr <- coll_stats()$pairs; loc <- rv$locations
+    ia <- if (is.null(loc)) rep(NA_integer_, nrow(pr)) else match(pr$collection_a, coll_loc()$located$collection)
+    ib <- if (is.null(loc)) rep(NA_integer_, nrow(pr)) else match(pr$collection_b, coll_loc()$located$collection)
+    l <- coll_loc()$located
+    pr$distance_km <- ifelse(is.na(ia) | is.na(ib), NA_real_,
+                             haversine_km(l$latitude[ia], l$longitude[ia], l$latitude[ib], l$longitude[ib]))
+    pr
+  })
+  MAP_CHOICES <- c("Mean PC1 score" = "pc1_mean", "Mean PC2 score" = "pc2_mean", "Mean PC3 score" = "pc3_mean",
+                   "Mean length / width" = "length_width_mean", "Mean position of maximum width" = "max_width_position_mean",
+                   "Within-collection variance" = "within_variance", "Number of specimens" = "n",
+                   "Mean length (mm)" = "length_mm_mean")
+  map_choices <- reactive({
+    sm <- coll_summary()
+    MAP_CHOICES[vapply(MAP_CHOICES, function(v) all(is.finite(sm[[v]])), logical(1))]
+  })
+  observe({
+    ch <- tryCatch(map_choices(), error = function(e) MAP_CHOICES["Mean length / width"])
+    cur <- isolate(input$map_value)
+    updateSelectInput(session, "map_value", choices = ch,
+                      selected = if (length(cur) == 1L && cur %in% ch) cur else "length_width_mean")
+  })
+  map_value <- reactive(if (!is.null(input$map_value) && input$map_value %in% map_choices()) input$map_value else "length_width_mean")
+  observeEvent(input$locations_file, {
+    tryCatch({
+      loc <- read_locations(input$locations_file$datapath)
+      rv$locations <- loc
+      notify(sprintf("Loaded locations for %d collection%s.", nrow(loc), plural(nrow(loc))))
+    }, error = function(e) notify(conditionMessage(e), "error"))
+  })
+  observeEvent(input$clear_locations, { rv$locations <- NULL; notify("Locations cleared.") })
+
   output$n_text <- renderText(sprintf("%d specimen%s in the analysis.", n_spec(), plural(n_spec())))
 
   figures <- list(
@@ -682,6 +769,33 @@ server <- function(input, output, session) {
     regions = reactive({ need_n(2, "Region analysis"); need_boundaries(); plot_regions(aligned()$mean, regions()) }),
     pvar = reactive({ need_n(2, "Region analysis"); plot_point_variance(aligned()$mean, pvar()) }),
     rvar = reactive({ need_n(2, "Region analysis"); need_boundaries(); plot_region_variance(region_var()) }),
+    coll_means = reactive({
+      need_coll(); cd <- coll()
+      plot_collection_means(lapply(stats::setNames(cd$eligible, cd$eligible), function(g)
+        efa_inverse(colMeans(cd$X[cd$group == g, , drop = FALSE]), 200L)))
+    }),
+    coll_share = reactive({
+      need_coll(); sh <- coll_stats()$share
+      validate(need(is.finite(sh$share), "The specimens in these collections have identical outlines."))
+      plot_collection_share(sh)
+    }),
+    coll_pairs = reactive({ need_coll(); plot_pair_distances(coll_stats()$pairs) }),
+    coll_matrix = reactive({ need_coll(); plot_distance_matrix(coll_stats()$pairs, coll()$eligible) }),
+    coll_within = reactive({ need_coll(); plot_within_variance(coll_stats()$within) }),
+    coll_map = reactive({
+      need_coll()
+      validate(need(!is.null(rv$locations), "Load a locations file to draw a map of the collections."))
+      w <- coll_window(); validate(need(isTRUE(w$ok), w$reason))
+      loc <- coll_loc()$located; sm <- coll_summary()
+      v <- map_value()
+      plot_collection_map(loc, sm[[v]][match(loc$collection, sm$collection)], names(MAP_CHOICES)[MAP_CHOICES == v], w)
+    }),
+    coll_geo = reactive({
+      need_coll()
+      validate(need(!is.null(rv$locations), "Load a locations file to compare shape distance with geographic distance."))
+      g <- coll_geo(); validate(need(isTRUE(g$available), g$reason))
+      pk <- coll_pairs_km(); plot_shape_geo(pk[is.finite(pk$distance_km), , drop = FALSE])
+    }),
     rv = reactive({
       need_n(4, "Covariation between regions"); need_boundaries()
       validate(need(any(is.finite(rv_table()$rv)), "Covariation between regions is not available because at least one region does not vary between these specimens."))
@@ -699,7 +813,14 @@ server <- function(input, output, session) {
     regions = reactive({
       req(n_spec() >= 2, boundaries_ok())
       text_regions(region_var(), if (n_spec() >= 4) rv_table() else NULL, n_spec(), boundaries())
-    })
+    }),
+    coll = reactive({ req(coll_ready()); s <- coll_stats(); text_collections(coll(), s$share, s$pairs, s$within) }),
+    coll_cautions = reactive(COLLECTION_CAUTIONS),
+    coll_map = reactive({
+      req(coll_ready(), !is.null(rv$locations))
+      text_collection_map(coll_window(), coll_loc()$not_located, coll_loc()$unmatched_rows)
+    }),
+    coll_geo = reactive({ req(coll_ready(), !is.null(rv$locations)); text_collection_geo(coll_geo()) })
   )
 
   output$stack_plot <- renderPlot(figures$stack())
@@ -716,6 +837,30 @@ server <- function(input, output, session) {
   output$pvar_plot <- renderPlot(figures$pvar())
   output$rvar_plot <- renderPlot(figures$rvar())
   output$rv_plot <- renderPlot(figures$rv())
+  output$coll_means_plot <- renderPlot(figures$coll_means())
+  output$coll_share_plot <- renderPlot(figures$coll_share())
+  output$coll_pairs_plot <- renderPlot(figures$coll_pairs())
+  output$coll_matrix_plot <- renderPlot(figures$coll_matrix())
+  output$coll_within_plot <- renderPlot(figures$coll_within())
+  output$coll_map <- renderPlot(figures$coll_map())
+  output$coll_geo_plot <- renderPlot(figures$coll_geo())
+  output$coll_intro <- renderUI({
+    if (!coll_ready()) return(p(COLLECTIONS_HELP))
+    paragraphs(text_collection_membership(coll()))
+  })
+  output$coll_text <- renderUI(paragraphs(texts$coll()))
+  output$coll_cautions <- renderUI(paragraphs(texts$coll_cautions()))
+  output$coll_map_text <- renderUI(paragraphs(texts$coll_map()))
+  output$coll_geo_text <- renderUI(paragraphs(texts$coll_geo()))
+  output$coll_pair_table <- renderTable({
+    need_coll(); pr <- coll_pairs_km()
+    out <- data.frame(Collections = paste(pr$collection_a, "and", pr$collection_b), Sizes = paste(pr$n_a, pr$n_b, sep = " and "),
+                      `Raw distance` = pr$raw_distance,
+                      `Reference (mean, central 95%)` = sprintf("%.4f (%.4f to %.4f)", pr$reference_mean, pr$reference_low, pr$reference_high),
+                      `Corrected distance` = pr$corrected_distance, check.names = FALSE, stringsAsFactors = FALSE)
+    if (any(is.finite(pr$distance_km))) out$`Distance (km)` <- pr$distance_km
+    out
+  }, digits = 4, na = "")
 
   output$outlines_text <- renderUI(paragraphs(texts$outlines()))
   output$meas_text <- renderUI(paragraphs(texts$meas()))
@@ -754,6 +899,23 @@ server <- function(input, output, session) {
   output$dl_coef <- downloadHandler(stamp("biface_fourier_coefficients", "csv"), function(file) {
     if (n_spec() < 2) return(empty_csv(file))
     utils::write.csv(cbind(data.frame(specimen = rownames(coefs()), stringsAsFactors = FALSE), coefs()), file, row.names = FALSE)
+  })
+
+  COLL_SUMMARY_COLUMNS <- c("collection", "n", "pc1_mean", "pc2_mean", "pc3_mean", "length_width_mean",
+                            "max_width_position_mean", "within_variance", "length_mm_mean", "located")
+  COLL_DISTANCE_COLUMNS <- c("collection_a", "collection_b", "n_a", "n_b", "raw_distance", "reference_mean",
+                             "reference_low", "reference_high", "corrected_square", "corrected_distance", "distance_km")
+  header_only <- function(file, cols) utils::write.csv(stats::setNames(data.frame(matrix(nrow = 0, ncol = length(cols))), cols), file, row.names = FALSE)
+  output$dl_coll_summary <- downloadHandler(stamp("biface_collection_summary", "csv"), function(file) {
+    if (!isTRUE(tryCatch(coll_ready(), error = function(e) FALSE))) return(header_only(file, COLL_SUMMARY_COLUMNS))
+    utils::write.csv(coll_summary()[, COLL_SUMMARY_COLUMNS], file, row.names = FALSE, na = "")
+  })
+  output$dl_coll_dist <- downloadHandler(stamp("biface_collection_distances", "csv"), function(file) {
+    if (!isTRUE(tryCatch(coll_ready(), error = function(e) FALSE))) return(header_only(file, COLL_DISTANCE_COLUMNS))
+    utils::write.csv(coll_pairs_km()[, COLL_DISTANCE_COLUMNS], file, row.names = FALSE, na = "")
+  })
+  output$dl_loc_template <- downloadHandler(stamp("biface_locations_template", "csv"), function(file) {
+    utils::write.csv(locations_template(groups(), rv$locations), file, row.names = FALSE, na = "")
   })
 
   # A figure or text that is unavailable (too few specimens) is left out.
@@ -807,6 +969,17 @@ server <- function(input, output, session) {
       add("Variance at each point", "pvar")
       add("Variance by region", "rvar")
       add("Covariation between regions", "rv")
+      if (isTRUE(tryCatch(coll_ready(), error = function(e) FALSE))) {
+        add("Comparison of collections: mean shapes", "coll_means", "coll")
+        sections[[length(sections) + 1L]] <- list(heading = "Comparison of collections: before drawing conclusions",
+                                                  plot = NULL, text = COLLECTION_CAUTIONS)
+        add("Share of shape variation between collections", "coll_share")
+        add("Distances between collection means", "coll_pairs")
+        add("Corrected distances between collection means", "coll_matrix")
+        add("Shape variance within collections", "coll_within")
+        if (isTRUE(input$map_in_report)) add("Map of collections", "coll_map", "coll_map")
+        add("Shape distance and geographic distance", "coll_geo", "coll_geo")
+      }
     }
     write_report(file, cover, sections)
   })

@@ -142,3 +142,74 @@ text_regions <- function(region_variance, rv_table, n, boundaries) {
   }
   out
 }
+
+# ---- collections ------------------------------------------------------------
+
+COLLECTION_CAUTIONS <- c(
+  "A difference between collections is a difference between these samples. It can arise from the age of the artifacts, raw material, resharpening and breakage, how each collection was gathered, or local practice. The analysis does not distinguish among these.",
+  "The grey reference ranges show what reassigning these same specimens produces. They are not confidence or credible intervals, and a value outside its range is not evidence of a real difference between populations or places.",
+  "Left and right in an outline depend on which face was photographed. Unless every collection was photographed with a consistent face up, tick \"Analyse symmetric shapes\" before comparing collections.",
+  "Collections photographed or outlined by different people, at different image resolutions, or with different detection settings can differ for that reason alone. Edge roughness from image resolution affects the higher harmonics.",
+  "The PC axes describe variation among all specimens. They are not the directions that best separate the collections.",
+  "Every saved specimen, including unlabelled ones and those in collections too small to compare, is part of the alignment, the automatic choice of the number of harmonics, and the PCA. Adding, removing, or editing any specimen can therefore change these results."
+)
+
+COLLECTIONS_HELP <- "Collections are defined by group labels. Give each specimen the name of its collection, for example its site, in step 2 or step 3. Each collection needs at least 3 specimens, and at least 2 collections are needed for a comparison. A file of collection locations is optional and adds a map."
+
+text_collection_membership <- function(cd) {
+  sizes <- sprintf("%s (%d)", names(cd$sizes), as.integer(cd$sizes))
+  out <- sprintf("The comparison uses %d collections with %d specimens in total: %s.", length(cd$eligible), sum(cd$sizes), name_list(sizes))
+  left <- character(0)
+  if (cd$unlabelled > 0) left <- c(left, sprintf("%d specimen%s without a group label", cd$unlabelled, if (cd$unlabelled == 1) "" else "s"))
+  if (length(cd$small)) left <- c(left, sprintf("%d specimen%s in collections with fewer than %d specimens (%s)", sum(cd$small),
+                                                if (sum(cd$small) == 1) "" else "s", MIN_COLLECTION_SIZE, name_list(names(cd$small))))
+  if (length(left)) out <- c(out, sprintf("Left out of the collection results: %s.", name_list(left)))
+  out
+}
+
+text_collections <- function(cd, share, pairs, within) {
+  out <- c(text_collection_membership(cd),
+           "The plot shows the mean outline of each collection, rebuilt from the mean of its specimens' Fourier coefficients.")
+  if (is.finite(share$share)) {
+    r <- share$reference
+    out <- c(out, sprintf("Of the total variation in outline shape among these specimens, %s lies between the collection means and the rest within collections. If specimens were assigned to collections at random with the same sizes, the expected share would be %s (the number of collections minus 1, divided by the number of specimens minus 1). Random reassignment gave shares from %s to %s (central 95%% of values).",
+                          fmt_pct(share$share, 1), fmt_pct(share$expected, 1), fmt_pct(r$low, 1), fmt_pct(r$high, 1)))
+  } else out <- c(out, "The specimens in these collections have identical outlines, so no share of variation can be computed.")
+  np <- nrow(pairs)
+  far <- pairs[which.max(pairs$corrected_distance), ]; near <- pairs[which.min(pairs$corrected_distance), ]
+  zero <- pairs[pairs$corrected_distance == 0, , drop = FALSE]
+  out <- c(out,
+           "The raw distance between two collection means is larger on average than the distance between the means of the populations they were drawn from, because each mean carries sampling error. The corrected distance subtracts the expected size of that error. It assumes that specimens are independent of one another and does not account for the alignment and the number of harmonics having been fitted to these same specimens.",
+           if (np > 1) sprintf("The largest corrected distance is between %s and %s, and the smallest between %s and %s.", far$collection_a, far$collection_b, near$collection_a, near$collection_b),
+           if (nrow(zero)) sprintf("The corrected distance is 0 for %s: their raw distance is no larger than sampling error of the expected size produces. This does not show that the collections have the same mean shape.",
+                                   name_list(paste(zero$collection_a, "and", zero$collection_b))),
+           sprintf("There %s %d pair%s of collections. Pairs that share a collection are not independent of one another, and with several pairs an observed distance can fall outside its grey range through sampling alone.",
+                   if (np == 1) "is" else "are", np, if (np == 1) "" else "s"))
+  v <- stats::setNames(within$variance, within$collection)
+  out <- c(out, if (all(v > 0)) sprintf("Shape variance within collections is largest in %s and smallest in %s, a ratio of %s to 1. Variance from 3 to 5 specimens is imprecise. The bars show how much it changes when one specimen is left out; they are not intervals.",
+                                        names(v)[which.max(v)], names(v)[which.min(v)], fmt_num(max(v) / min(v), 1))
+         else if (any(v > 0)) sprintf("The specimens of %s do not differ in outline, so no ratio of variances is given.", name_list(names(v)[v == 0]))
+         else "No collection shows variation in outline shape among its specimens.")
+  c(out, "Colour the PCA plot by group label to see the specimens of each collection in the space of the principal components.")
+}
+
+text_collection_geo <- function(geo) {
+  if (!isTRUE(geo$available)) return(geo$reason)
+  r <- geo$reference
+  G <- (1 + sqrt(1 + 8 * geo$n_pairs)) / 2
+  c(sprintf("Each point is a pair of collections: %d located collections give %d pairs. Pairs that share a collection are not independent, so the points are not independent observations.", as.integer(G), as.integer(geo$n_pairs)),
+    sprintf("The correlation between corrected shape distance and geographic distance is %s. Reassigning the positions among the collections (%d assignments%s) gave values from %s to %s (central 95%%), with a mean of %s.",
+            fmt_num(geo$r), as.integer(geo$n_assignments), if (geo$n_assignments <= 5040) ", all possible" else ", chosen at random",
+            fmt_num(r$low), fmt_num(r$high), fmt_num(r$mean)),
+    "With a few locations, any pattern here can arise from the particular collections sampled. A few locations cannot establish a spatial pattern. Rounded or approximate coordinates change the geographic distances.")
+}
+
+text_collection_map <- function(window, not_located, unmatched) {
+  out <- if (isTRUE(window$ok)) c(
+    "Each point is a located collection, coloured by the selected summary. The colours show means of samples, and a mean from a small collection can differ from the mean of the population it came from by more than the differences between collections.",
+    "The coastlines and boundaries are low resolution and are for orientation only. A small window may show no boundaries, and outside the contiguous United States the map shows country borders only. The scale bar is correct along its own line of latitude and approximate elsewhere. Labels of nearby collections can overlap.")
+  else window$reason
+  if (length(not_located)) out <- c(out, sprintf("Collections without a location: %s.", name_list(not_located)))
+  if (length(unmatched)) out <- c(out, sprintf("Rows of the locations file that match no collection in the comparison: %s. Names must match the group labels exactly.", name_list(unmatched)))
+  out
+}

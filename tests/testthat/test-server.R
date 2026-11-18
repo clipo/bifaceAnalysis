@@ -18,8 +18,9 @@ test_that("the demonstration produces every figure, text, and download", {
     do.call(session$setInputs, defaults)
     session$setInputs(run_demo = 1)
     expect_identical(n_spec(), 4L)
-    for (f in names(figures)) expect_identical(try_figure(figures[[f]]), "plot", info = f)
-    for (t in names(texts)) expect_identical(try_text(texts[[t]]), "text", info = t)
+    # The demonstration has no group labels, so the collection results give a message.
+    for (f in names(figures)) expect_identical(try_figure(figures[[f]]), if (startsWith(f, "coll")) "message" else "plot", info = f)
+    for (t in names(texts)) expect_identical(try_text(texts[[t]]), if (startsWith(t, "coll") && t != "coll_cautions") "message" else "text", info = t)
 
     pdf <- output$dl_report
     expect_identical(readBin(pdf, "raw", 4), charToRaw("%PDF"))
@@ -313,7 +314,10 @@ test_that("equal region boundaries withhold the region results with a message", 
 test_that("figures that need more specimens say how many, and the outline file has one row per vertex", {
   run_app_test({
     do.call(session$setInputs, defaults)
-    for (f in setdiff(names(figures), character(0))) expect_match(figure_message(figures[[f]]), "needs at least [0-9] specimens\\. You have 0\\.", info = f)
+    for (f in names(figures)) {
+      if (startsWith(f, "coll")) expect_match(figure_message(figures[[f]]), "Collections are defined by group labels", info = f)
+      else expect_match(figure_message(figures[[f]]), "needs at least [0-9] specimens\\. You have 0\\.", info = f)
+    }
     session$setInputs(run_demo = 1)
     outl <- read.csv(output$dl_outlines)
     expect_identical(nrow(outl), sum(vapply(rv$specimens, function(s) nrow(s$outline), integer(1))))
@@ -331,5 +335,131 @@ test_that("figures that need more specimens say how many, and the outline file h
     session$setInputs(load_outlines = data.frame(name = "good.csv", datapath = f, stringsAsFactors = FALSE))
     expect_identical(n_spec(), 4L)
     expect_identical(edited()$name, "from file"); expect_identical(edited()$group, "G")
+  })
+})
+
+# ---- collections (docs/specs/2026-11-17_collections_spec.md) -----------------
+
+# Outline file with 3 collections of 3 (A, B, C), one of 2 (D), and 2
+# unlabelled specimens, built from the demonstration outlines by stretching
+# their width.
+collection_csv <- function() {
+  base <- lapply(DEMO_FILES, function(f) process_image(load_working_image(f), direction = "left")$std)
+  spec <- list(); k <- 0
+  add <- function(src, stretch, group) {
+    k <<- k + 1
+    b <- base[[src]]
+    spec[[k]] <<- new_specimen(sprintf("s%02d", k), sprintf("%s_%02d", src, k), group,
+                               cbind(b$outline[, 1] * stretch, b$outline[, 2]), b$base_row, px_per_mm = 10)
+  }
+  for (st in c(0.9, 1, 1.12)) add("artifact1", st, "A")
+  for (st in c(0.95, 1, 1.08)) add("artifact2", st, " B ")
+  for (st in c(0.9, 1.05, 1.15)) add("artifact3", st, "C")
+  for (st in c(1, 1.1)) add("artifact4", st, "D")
+  add("artifact4", 0.92, ""); add("artifact1", 1.2, "")
+  f <- tempfile(fileext = ".csv")
+  utils::write.csv(specimens_to_csv(spec), f, row.names = FALSE)
+  f
+}
+loc_file <- function(lines) { f <- tempfile(fileext = ".csv"); writeLines(lines, f); data.frame(name = "loc.csv", datapath = f, stringsAsFactors = FALSE) }
+upload <- function(f) data.frame(name = "x.csv", datapath = f, stringsAsFactors = FALSE)
+
+test_that("labelled collections produce every collection result, and labels do not change other results", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$setInputs(load_outlines = upload(collection_csv()))
+    expect_identical(n_spec(), 13L)
+    expect_identical(sort(unique(groups())), c("", "A", "B", "C", "D"))   # " B " was trimmed on loading
+    expect_identical(coll()$eligible, c("A", "B", "C"))
+    expect_identical(coll()$unlabelled, 2L); expect_identical(coll()$small, c(D = 2L))
+    for (f in c("coll_means", "coll_share", "coll_pairs", "coll_matrix", "coll_within"))
+      expect_identical(try_figure(figures[[f]]), "plot", info = f)
+    expect_identical(try_figure(figures$coll_map), "message")
+    expect_identical(try_text(texts$coll), "text")
+    expect_match(paste(texts$coll(), collapse = " "), "2 specimens without a group label")
+
+    before <- list(pca = pca(), tree = tree(), rv = rv_table())
+    for (id in names(rv$specimens)) rv$specimens[[id]]$group <- ""
+    expect_identical(list(pca = pca(), tree = tree(), rv = rv_table()), before)
+    expect_identical(try_figure(figures$coll_means), "message")
+  })
+})
+
+test_that("locations load, replace, rematch, and clear, and downloads have their stated columns", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    sm0 <- read.csv(output$dl_coll_summary, check.names = FALSE)
+    expect_identical(nrow(sm0), 0L)
+    expect_identical(names(sm0), c("collection", "n", "pc1_mean", "pc2_mean", "pc3_mean", "length_width_mean",
+                                   "max_width_position_mean", "within_variance", "length_mm_mean", "located"))
+    session$setInputs(load_outlines = upload(collection_csv()))
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "Z,40,-70")))
+    expect_identical(coll_loc()$located$collection, c("A", "B"))
+    expect_identical(coll_loc()$unmatched_rows, "Z"); expect_identical(coll_loc()$not_located, "C")
+    expect_identical(try_figure(figures$coll_map), "plot")
+    expect_identical(try_figure(figures$coll_geo), "message")          # 2 located collections, 5 needed
+    expect_match(paste(texts$coll_geo(), collapse = " "), "at least 5 located collections")
+
+    session$setInputs(locations_file = loc_file(c("collection,latitude", "A,1")))   # rejected: earlier locations kept
+    expect_identical(coll_loc()$located$collection, c("A", "B"))
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "C,41,-77")))  # replaces
+    expect_identical(coll_loc()$located$collection, "C")
+    expect_identical(try_figure(figures$coll_map), "message")          # one located collection
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "C,41,-77")))
+
+    sm <- read.csv(output$dl_coll_summary, check.names = FALSE, na.strings = "")
+    expect_identical(sm$collection, c("A", "B", "C")); expect_identical(sm$n, c(3L, 3L, 3L))
+    expect_true(all(sm$located)); expect_true(all(is.finite(sm$length_mm_mean)))
+    expect_false(any(c("latitude", "longitude") %in% names(sm)))
+    di <- read.csv(output$dl_coll_dist, check.names = FALSE, na.strings = "")
+    expect_identical(names(di), c("collection_a", "collection_b", "n_a", "n_b", "raw_distance", "reference_mean",
+                                  "reference_low", "reference_high", "corrected_square", "corrected_distance", "distance_km"))
+    expect_identical(nrow(di), 3L); expect_true(all(is.finite(di$distance_km)))
+    expect_equal(di$distance_km[1], haversine_km(42.1, -75.9, 42.4, -76.3))
+
+    id_a <- names(rv$specimens)[vapply(rv$specimens, function(s) s$group == "A", logical(1))]
+    for (id in id_a) rv$specimens[[id]]$group <- "A2"                   # renamed: loses its location
+    expect_identical(coll_loc()$not_located, "A2"); expect_identical(coll_loc()$unmatched_rows, "A")
+    tp <- read.csv(output$dl_loc_template, na.strings = "")
+    expect_identical(tp$collection, c("A2", "B", "C", "D")); expect_true(is.na(tp$latitude[1]))
+    di2 <- read.csv(output$dl_coll_dist, na.strings = "")
+    expect_true(is.na(di2$distance_km[di2$collection_a == "A2" | di2$collection_b == "A2"][1]))
+
+    session$setInputs(map_in_report = TRUE)             # the box is ticked by default in the page
+    pages_with_map <- pdf_pages(output$dl_report)
+    session$setInputs(map_in_report = FALSE)
+    expect_lt(pdf_pages(output$dl_report), pages_with_map)
+    session$setInputs(clear_locations = 1)
+    expect_null(rv$locations)
+    expect_identical(try_figure(figures$coll_map), "message")
+  })
+})
+
+test_that("five located collections give the shape-geography comparison, and the map selector follows the PCA rank", {
+  run_app_test({
+    do.call(session$setInputs, defaults)
+    session$setInputs(load_outlines = upload(collection_csv()))
+    ids <- names(rv$specimens)
+    labs <- c("A", "A", "A", "B", "B", "B", "C", "C", "C", "D", "D", "D", "")
+    for (i in seq_along(ids)) rv$specimens[[ids[i]]]$group <- labs[i]
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3", "C,41,-77", "D,43,-74.5")))
+    expect_identical(try_figure(figures$coll_geo), "message")          # 4 located
+    expect_true(all(c("pc1_mean", "pc2_mean", "pc3_mean") %in% map_choices()))
+    expect_identical(map_value(), "length_width_mean")
+    session$setInputs(map_value = "pc2_mean")
+    expect_identical(map_value(), "pc2_mean")
+    expect_identical(try_figure(figures$coll_map), "plot")
+
+    # A fifth collection of 3 specimens, located: the comparison is drawn.
+    b <- rv$specimens[[ids[1]]]
+    for (j in 1:3) rv$specimens[[paste0("e", j)]] <- new_specimen(paste0("e", j), paste0("extra_", j), "E",
+                                                                  cbind(b$outline[, 1] * (0.8 + j / 20), b$outline[, 2]), b$base_row, 10)
+    session$setInputs(locations_file = loc_file(c("collection,latitude,longitude", "A,42.1,-75.9", "B,42.4,-76.3",
+                                                  "C,41,-77", "D,43,-74.5", "E,41.6,-75.1")))
+    expect_identical(try_figure(figures$coll_geo), "plot")
+    g <- coll_geo()
+    expect_true(g$available); expect_identical(g$n_assignments, 120L); expect_identical(g$n_pairs, 10)
+    expect_match(paste(texts$coll_geo(), collapse = " "), "5 located collections give 10 pairs")
+    expect_true(all(is.finite(read.csv(output$dl_coll_dist, na.strings = "")$distance_km)))
   })
 })

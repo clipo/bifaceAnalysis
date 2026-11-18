@@ -12,7 +12,7 @@ rewrite corrects are documented in
 ## Running the app
 
 ```r
-install.packages(c("shiny", "bslib", "ggplot2", "imager"))
+install.packages(c("shiny", "bslib", "ggplot2", "imager", "maps"))
 shiny::runApp("bifaceAnalysis")     # from the repository root
 ```
 
@@ -32,8 +32,29 @@ reference values from Momocs 1.4.1 and geomorph (see Tests).
 3. **Specimens.** Review, rename, label, or remove saved specimens. Download
    the outlines as a CSV file and load that file later to continue.
 4. **Results.** Outlines, measurements, harmonics, principal components, shape
-   change along components, clusters, and regions. A PDF report and CSV files
-   of measurements, PC scores, and Fourier coefficients can be downloaded.
+   change along components, clusters, regions, and collections. A PDF report
+   and CSV files of measurements, PC scores, Fourier coefficients, and
+   collection summaries and distances can be downloaded.
+
+## Comparing collections (optional)
+
+The Collections tab compares groups of specimens, for example collections from
+different sites. A collection is the set of specimens that share a group label.
+Each collection needs at least 3 specimens, and at least 2 collections are
+needed. The tab shows the mean shape of each collection, the share of shape
+variation that lies between collections, distances between collection means
+(raw, and corrected for sampling error), and the variation within each
+collection. Each is shown beside the values produced by reassigning the same
+specimens at random. These are descriptions of the samples, not tests.
+
+A map is added when a locations file is loaded: a CSV file with the columns
+`collection`, `latitude`, and `longitude` (decimal degrees, WGS84, north and
+east positive), one row per collection, with names matching the group labels.
+The tab offers a template with the current labels. With 5 or more located
+collections, shape distance is also plotted against geographic distance. The
+map uses the outlines of the `maps` package and draws no terrain. Locations are
+kept for the session only and are not written to the outline file. The design
+is in `docs/specs/2026-11-17_collections_spec.md`.
 
 Analyses need a minimum number of specimens: 2 for the overlay, harmonics, and
 region variance; 3 for principal components; 4 for clustering, the
@@ -48,6 +69,7 @@ bifaceAnalysis/
   R/outline.R      orientation, tip and base, corresponding points, measurements
   R/efa.R          elliptical Fourier analysis
   R/shape.R        Procrustes alignment, symmetry, PCA, clusters, regions
+  R/collections.R  comparison of collections, locations file, map geometry
   R/store.R        image loading, specimen records, CSV schema
   R/plots.R        one function per figure
   R/interpret.R    the "how to read this" text

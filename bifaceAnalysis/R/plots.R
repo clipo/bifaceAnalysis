@@ -17,10 +17,15 @@ theme_shape <- function(base_size = 13) {
                    strip.text = ggplot2::element_text(size = base_size * 0.85))
 }
 
-category_scale <- function(values, aesthetic = "colour", name = NULL) {
+# Colours for categories (group labels, collections, clusters): Okabe-Ito for
+# up to 8 levels, discrete viridis for more, so that no colour repeats.
+category_colours <- function(values) {
   lv <- levels(factor(values))
-  cols <- stats::setNames(rep(OKABE_ITO, length.out = length(lv)), lv)
-  ggplot2::scale_discrete_manual(aesthetics = aesthetic, values = cols, name = name)
+  cols <- if (length(lv) <= length(OKABE_ITO)) OKABE_ITO[seq_along(lv)] else scales::viridis_pal()(length(lv))
+  stats::setNames(cols, lv)
+}
+category_scale <- function(values, aesthetic = "colour", name = NULL) {
+  ggplot2::scale_discrete_manual(aesthetics = aesthetic, values = category_colours(values), name = name)
 }
 
 closed <- function(m) rbind(m, m[1, , drop = FALSE])
@@ -302,4 +307,108 @@ plot_region_rv <- function(rv_table) {
     ggplot2::scale_x_continuous(limits = c(0, 1)) +
     ggplot2::labs(x = "RV coefficient", y = NULL) + theme_app() +
     ggplot2::theme(legend.direction = "vertical")
+}
+
+# ---- collections ------------------------------------------------------------
+
+# Mean shape of each collection, overlaid.
+plot_collection_means <- function(shapes) {
+  df <- shapes_frame(shapes)
+  df$collection <- factor(df$specimen, levels = names(shapes))
+  ggplot2::ggplot(df, ggplot2::aes(x, y, group = collection, colour = collection)) +
+    ggplot2::geom_path(linewidth = 0.9) + ggplot2::coord_equal() +
+    category_scale(df$collection, "colour", "Collection") + theme_shape()
+}
+
+# Observed value(s) beside a reassignment reference, one row per item.
+reference_plot <- function(df, x_label, obs_label, ref_label, limits = NULL) {
+  df$item <- factor(df$item, levels = rev(unique(df$item)))
+  p <- ggplot2::ggplot(df, ggplot2::aes(y = item)) +
+    ggplot2::geom_linerange(ggplot2::aes(xmin = low, xmax = high, colour = "ref"), linewidth = 4, alpha = 0.5) +
+    ggplot2::geom_point(ggplot2::aes(x = mean, colour = "ref"), shape = 124, size = 5) +
+    ggplot2::geom_point(ggplot2::aes(x = observed, colour = "obs"), size = 3.5) +
+    ggplot2::scale_colour_manual(values = c(obs = OKABE_ITO[5], ref = "grey55"), name = NULL,
+                                 labels = c(obs = obs_label, ref = ref_label)) +
+    ggplot2::labs(x = x_label, y = NULL) + theme_app() + ggplot2::theme(legend.direction = "vertical")
+  if (!is.null(limits)) p <- p + ggplot2::scale_x_continuous(limits = limits)
+  p
+}
+
+plot_collection_share <- function(share) {
+  r <- share$reference
+  reference_plot(data.frame(item = "Between collections", observed = share$share, mean = r$mean, low = r$low, high = r$high),
+                 "Share of shape variation between collections", "Observed share",
+                 "Share with specimens reassigned to collections at random (mean and central 95% of values)", c(0, 1))
+}
+
+plot_pair_distances <- function(pairs) {
+  reference_plot(data.frame(item = paste(pairs$collection_a, "and", pairs$collection_b), observed = pairs$raw_distance,
+                            mean = pairs$reference_mean, low = pairs$reference_low, high = pairs$reference_high),
+                 "Distance between collection means (raw)", "Observed distance",
+                 "Distance with the two collections' specimens reassigned at random (mean and central 95% of values)",
+                 c(0, max(c(pairs$raw_distance, pairs$reference_high))))
+}
+
+# Matrix of corrected distances between collection means.
+plot_distance_matrix <- function(pairs, collections) {
+  both <- rbind(data.frame(a = pairs$collection_a, b = pairs$collection_b, d = pairs$corrected_distance),
+                data.frame(a = pairs$collection_b, b = pairs$collection_a, d = pairs$corrected_distance),
+                data.frame(a = collections, b = collections, d = 0))
+  both$a <- factor(both$a, levels = collections); both$b <- factor(both$b, levels = rev(collections))
+  digits <- if (max(both$d) > 0) max(0, 2 - floor(log10(max(both$d)))) else 2
+  ggplot2::ggplot(both, ggplot2::aes(a, b, fill = d)) + ggplot2::geom_tile(colour = "white") +
+    ggplot2::geom_text(ggplot2::aes(label = formatC(d, format = "f", digits = digits)), size = 3.5, family = "sans",
+                       colour = ifelse(both$d > 0.6 * max(both$d), "black", "white")) +
+    ggplot2::scale_fill_viridis_c(name = "Corrected distance") + ggplot2::coord_equal() +
+    ggplot2::labs(x = NULL, y = NULL) + theme_app() +
+    ggplot2::theme(panel.grid.major = ggplot2::element_blank(), axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
+}
+
+# Within-collection variance with the range over leave-one-out values.
+plot_within_variance <- function(within) {
+  within$collection <- factor(within$collection, levels = rev(within$collection))
+  ggplot2::ggplot(within, ggplot2::aes(y = collection, colour = collection)) +
+    ggplot2::geom_linerange(ggplot2::aes(xmin = loo_low, xmax = loo_high), linewidth = 2, alpha = 0.5) +
+    ggplot2::geom_point(ggplot2::aes(x = variance), size = 3.5) +
+    category_scale(rev(levels(within$collection)), "colour", NULL) + ggplot2::guides(colour = "none") +
+    ggplot2::expand_limits(x = 0) +
+    ggplot2::labs(x = "Shape variance within the collection (bar: range with one specimen left out)", y = NULL) + theme_app()
+}
+
+# Corrected shape distance against geographic distance, one point per pair.
+plot_shape_geo <- function(pairs_km) {
+  pairs_km$label <- paste(pairs_km$collection_a, "-", pairs_km$collection_b)
+  ggplot2::ggplot(pairs_km, ggplot2::aes(distance_km, corrected_distance)) +
+    ggplot2::geom_point(colour = OKABE_ITO[1], size = 3) +
+    ggplot2::geom_text(ggplot2::aes(label = label), vjust = -0.9, size = 3, family = "sans", colour = "grey30") +
+    ggplot2::expand_limits(x = 0, y = 0) +
+    ggplot2::labs(x = "Geographic distance (km)", y = "Corrected distance between collection means") + theme_app()
+}
+
+# Map of located collections coloured by a summary value.
+plot_collection_map <- function(located, value, value_name, window) {
+  located$value <- value
+  bar <- scale_bar(window)
+  layers <- map_layers(window)
+  bg <- list(ggplot2::geom_polygon(data = map_polygons("world"), ggplot2::aes(long, lat, group = group),
+                                   fill = "grey94", colour = "grey60", linewidth = 0.25))
+  if ("state" %in% layers)
+    bg <- c(bg, ggplot2::geom_polygon(data = map_polygons("state"), ggplot2::aes(long, lat, group = group),
+                                      fill = NA, colour = "grey70", linewidth = 0.2))
+  if ("county" %in% layers)
+    bg <- c(bg, ggplot2::geom_polygon(data = map_polygons("county"), ggplot2::aes(long, lat, group = group),
+                                      fill = NA, colour = "grey82", linewidth = 0.15))
+  bar_df <- data.frame(x = bar$x0, xend = bar$x1, y = bar$y)
+  ggplot2::ggplot() + bg +
+    ggplot2::geom_point(data = located, ggplot2::aes(longitude, latitude, colour = value), size = 4) +
+    ggplot2::geom_text(data = located, ggplot2::aes(longitude, latitude, label = collection),
+                       vjust = -1.1, size = 3.5, family = "sans") +
+    ggplot2::geom_segment(data = bar_df, ggplot2::aes(x = x, xend = xend, y = y, yend = y), linewidth = 1) +
+    ggplot2::annotate("text", x = (bar$x0 + bar$x1) / 2, y = bar$y, label = sprintf("%s km (approximate)", format(bar$km, big.mark = ",", scientific = FALSE)),
+                      vjust = -0.7, size = 3.2, family = "sans") +
+    ggplot2::scale_colour_viridis_c(name = value_name) +
+    ggplot2::coord_quickmap(xlim = window$xlim, ylim = window$ylim, expand = FALSE) +
+    ggplot2::labs(x = "Longitude", y = "Latitude") + theme_app() +
+    ggplot2::theme(panel.background = ggplot2::element_rect(fill = "#EAF2F8", colour = NA),
+                   legend.key.width = grid::unit(1.5, "cm"))
 }

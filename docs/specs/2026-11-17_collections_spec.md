@@ -615,3 +615,23 @@ oracles, and tests for summaries, shapes, plot data, map geometry, and
 unavailable states. F9: the threshold of 5 stated as operational; cautions on
 fixed-data references, dependent pairs, sample means, and approximate
 coordinates added. The figure count is corrected from six to seven.
+
+## Build notes
+
+(a) Section 10, scale bar test (2026-11-17). Revision 2 asked for the bar's
+endpoints to be L km apart by the haversine distance within 0.1 percent. The
+bar is drawn along a parallel with the length rule of section 6, and the
+haversine distance between two points on one parallel is the great-circle
+distance, which is shorter than the distance along the parallel. For a bar of
+1000 km at 60 degrees the difference is about 0.3 percent, so the test as
+written would fail the rule it checks. The test instead checks that the length
+along the parallel, 111.19508 cos(lat_bar) times the longitude extent, equals L
+to 1e-9. The rule and the label "approximate" are unchanged.
+(b) Section 7, report (2026-11-17). The standing cautions of section 8 form
+their own report section, "Comparison of collections: before drawing
+conclusions", placed after the mean shapes.
+(c) Section 11, performance (2026-11-17). Six collections of 20 specimens with
+H = 30 took 0.46 s for the share, pair, and within-collection statistics, and
+7 located collections (5040 assignments) took 0.07 s, on the development
+machine.
+
